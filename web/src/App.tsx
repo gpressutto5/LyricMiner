@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Search, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from 'cn'
-import type { Health } from '../../shared/types'
-import { api, parseYouTubeId } from './api'
+import { ankiAlive } from './anki'
+import { parseYouTubeId } from './api'
 import { SearchView } from './SearchView'
 import { SettingsDialog } from './SettingsDialog'
+import { SetupDialog } from './SetupDialog'
 import { TrackView } from './TrackView'
 import { captureSupported } from './capture'
-import { loadSettings, saveSettings, type Settings } from './storage'
+import { isSetupDone, loadSettings, markSetupDone, saveSettings, type Settings } from './storage'
 
 export type ToastKind = 'ok' | 'bad' | 'info'
 export type ToastFn = (text: string, kind?: ToastKind) => void
@@ -23,16 +24,28 @@ export default function App() {
   const [trackId, setTrackId] = useState<string | null>(() => new URLSearchParams(location.search).get('v'))
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [health, setHealth] = useState<Health | null>(null)
+  const [anki, setAnki] = useState<boolean | null>(null)
+  const [setupOpen, setSetupOpen] = useState(() => !isSetupDone())
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState<SearchRequest>({ q: '', nonce: 0 })
 
+  // Ping AnkiConnect directly; pause while the setup dialog polls on its own.
   useEffect(() => {
-    const tick = () => api.health().then(setHealth).catch(() => setHealth(null))
+    if (setupOpen) return
+    let alive = true
+    const tick = () => ankiAlive().then((ok) => alive && setAnki(ok))
     tick()
     const i = setInterval(tick, 10000)
-    return () => clearInterval(i)
-  }, [])
+    return () => {
+      alive = false
+      clearInterval(i)
+    }
+  }, [setupOpen])
+
+  const finishSetup = () => {
+    markSetupDone()
+    setSetupOpen(false)
+  }
 
   useEffect(() => {
     const u = new URL(location.href)
@@ -75,13 +88,11 @@ export default function App() {
   }
 
   const capture = captureSupported()
-  const failing = health ? [!health.anki && 'Anki', !capture && 'Tab capture'].filter(Boolean) : []
-  const statusTone = health === null ? 'bg-soft text-muted' : failing.length ? 'bg-bad-tint text-bad-text' : 'bg-ok-tint text-ok-text'
-  const statusDot = health === null ? 'bg-faint' : failing.length ? 'bg-bad' : 'bg-ok'
-  const statusText = health === null ? 'Checking tools…' : failing.length ? `${failing.join(' · ')} unavailable` : 'Anki · Tab capture'
-  const statusTitle = health
-    ? `Anki: ${health.anki ? 'connected' : 'not reachable (is Anki open?)'}\nTab capture: ${capture ? 'supported' : 'not supported in this browser (use Chrome or Edge)'}`
-    : 'Cannot reach the LyricMiner server'
+  const failing = anki === null ? [] : [!anki && 'Anki', !capture && 'Tab capture'].filter(Boolean)
+  const statusTone = anki === null ? 'bg-soft text-muted' : failing.length ? 'bg-bad-tint text-bad-text' : 'bg-ok-tint text-ok-text'
+  const statusDot = anki === null ? 'bg-faint' : failing.length ? 'bg-bad' : 'bg-ok'
+  const statusText = anki === null ? 'Checking Anki…' : failing.length ? `${failing.join(' · ')} unavailable` : 'Anki · Tab capture'
+  const statusTitle = `Anki: ${anki ? 'connected' : 'not reachable (is Anki open and this site allowed?)'}\nTab capture: ${capture ? 'supported' : 'not supported in this browser (use Chrome or Edge)'}\n\nClick for setup help`
 
   return (
     <div className="flex h-full flex-col bg-canvas text-ink">
@@ -98,7 +109,7 @@ export default function App() {
             autoFocus={!trackId}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search YouTube or paste a link"
+            placeholder="Paste a YouTube link"
             className="min-w-0 flex-1 bg-transparent font-semibold outline-none placeholder:font-medium placeholder:text-faint"
           />
           <button
@@ -108,15 +119,20 @@ export default function App() {
               query.trim() ? 'opacity-100' : 'pointer-events-none opacity-0',
             )}
           >
-            Search
+            Open
           </button>
         </form>
 
         <div className="flex items-center gap-3">
-          <span title={statusTitle} className={cn('inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] font-semibold whitespace-nowrap', statusTone)}>
+          <button
+            type="button"
+            title={statusTitle}
+            onClick={() => setSetupOpen(true)}
+            className={cn('inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] font-semibold whitespace-nowrap hover:brightness-95', statusTone)}
+          >
             <span className={cn('size-2 rounded-full', statusDot)} />
             {statusText}
-          </span>
+          </button>
           <button
             type="button"
             aria-label="Settings"
@@ -129,12 +145,13 @@ export default function App() {
       </header>
 
       {trackId ? (
-        <TrackView key={trackId} id={trackId} settings={settings} onSettings={updateSettings} toast={showToast} modalOpen={settingsOpen} />
+        <TrackView key={trackId} id={trackId} settings={settings} onSettings={updateSettings} toast={showToast} modalOpen={settingsOpen || setupOpen} />
       ) : (
-        <SearchView request={search} onOpen={openTrack} onClear={goHome} toast={showToast} />
+        <SearchView request={search} onOpen={openTrack} onClear={goHome} onSetup={() => setSetupOpen(true)} />
       )}
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} onChange={updateSettings} />
+      <SetupDialog open={setupOpen} onOpenChange={(o) => (o ? setSetupOpen(true) : finishSetup())} onDone={finishSetup} />
     </div>
   )
 }

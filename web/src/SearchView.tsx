@@ -1,41 +1,23 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowLeft, ExternalLink, X } from 'lucide-react'
 import { cn } from 'cn'
-import type { SearchResult, TrackInfo } from '../../shared/types'
-import type { SearchRequest, ToastFn } from './App'
-import { api } from './api'
-import { forgetTrack, loadLibrary } from './library'
+import type { TrackInfo } from '../../shared/types'
+import type { SearchRequest } from './App'
+import { bookmarkletHref, youtubeSearchUrl } from './api'
 import { Card, Key, SectionLabel } from './components/primitives'
+import { forgetTrack, loadLibrary } from './library'
 import { formatTime } from './lrc'
 
 interface Props {
   request: SearchRequest
   onOpen: (id: string) => void
-  /** Leave the results page and show the library again. */
+  /** Leave the "search" hand-off page and show the library again. */
   onClear: () => void
-  toast: ToastFn
+  onSetup: () => void
 }
 
-export function SearchView({ request, onOpen, onClear, toast }: Props) {
-  const [results, setResults] = useState<SearchResult[] | null>(null)
-  const [busy, setBusy] = useState(false)
+export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
   const [library, setLibrary] = useState<TrackInfo[]>(loadLibrary)
-
-  useEffect(() => {
-    if (!request.q) return
-    let alive = true
-    setBusy(true)
-    setResults(null)
-    api
-      .search(request.q)
-      .then((r) => alive && setResults(r))
-      .catch((e: Error) => alive && toast(e.message, 'bad'))
-      .finally(() => alive && setBusy(false))
-    return () => {
-      alive = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request.nonce])
 
   const remove = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
@@ -60,33 +42,30 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
                 <ArrowLeft className="size-3.5" strokeWidth={2.5} />
                 Library
               </button>
-              <SectionLabel className="text-muted">Results</SectionLabel>
-              <span className="text-[13px] font-medium text-faint">
-                {busy ? `Searching YouTube for “${request.q}”…` : results?.length ? `for “${request.q}” · ${results.length} songs` : `nothing found for “${request.q}”`}
-              </span>
+              <SectionLabel className="text-muted">Search</SectionLabel>
             </div>
-            {busy && (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4" aria-busy="true" aria-label="Loading results">
-                {Array.from({ length: 8 }, (_, i) => (
-                  <SkeletonCard key={i} />
-                ))}
-              </div>
-            )}
-            {!busy && results && results.length > 0 && (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-                {results.map((r) => (
-                  <SongCard key={r.id} title={r.title} channel={r.channel} thumbnail={r.thumbnail} duration={r.duration} onOpen={() => onOpen(r.id)} />
-                ))}
-              </div>
-            )}
-            {!busy && results && results.length === 0 && (
-              <Card className="flex flex-col items-center gap-2 px-6 py-10 text-center shadow-card-sm">
-                <span className="font-bold">Nothing found</span>
-                <span className="max-w-[420px] text-[13px] leading-relaxed font-medium text-faint">
-                  Try the song title in Japanese or romaji, add the artist, or paste a YouTube link directly into the search box.
+            <Card className="flex flex-col items-start gap-4 px-6 py-6 shadow-card-sm">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[17px] font-bold">
+                  Search YouTube for <span className="font-jp">“{request.q}”</span>
                 </span>
-              </Card>
-            )}
+                <span className="max-w-[560px] text-[13px] leading-relaxed font-medium text-muted">
+                  A website can't search YouTube on its own. Find the song there, then paste its link into the box above, or use the bookmarklet
+                  to jump straight back here from the video page.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={youtubeSearchUrl(request.q)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-11 items-center gap-2 rounded-[14px] bg-ink px-4 text-[13px] font-bold text-white hover:bg-ink-2"
+                >
+                  Open YouTube results <ExternalLink className="size-3.5" />
+                </a>
+                <Bookmarklet />
+              </div>
+            </Card>
           </section>
         ) : (
           <>
@@ -94,23 +73,31 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
               <div className="flex items-baseline gap-3">
                 <SectionLabel className="text-muted">Library</SectionLabel>
                 <span className="text-[13px] font-medium text-faint">
-                  {library.length ? `${library.length} ${library.length === 1 ? 'song' : 'songs'}` : 'Songs you open are kept here. Search above to add your first one.'}
+                  {library.length ? `${library.length} ${library.length === 1 ? 'song' : 'songs'}` : 'Songs you open are kept here.'}
                 </span>
               </div>
-              {library.length > 0 && (
+              {library.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
                   {library.map((t) => (
-                    <SongCard
-                      key={t.id}
-                      title={t.title}
-                      channel={t.channel}
-                      thumbnail={t.thumbnail}
-                      duration={t.duration}
-                      onOpen={() => onOpen(t.id)}
-                      onRemove={(e) => remove(e, t.id)}
-                    />
+                    <SongCard key={t.id} title={t.title} channel={t.channel} thumbnail={t.thumbnail} duration={t.duration} onOpen={() => onOpen(t.id)} onRemove={(e) => remove(e, t.id)} />
                   ))}
                 </div>
+              ) : (
+                <Card className="flex flex-col items-start gap-4 px-6 py-6 shadow-card-sm">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[17px] font-bold">Add your first song</span>
+                    <span className="max-w-[560px] text-[13px] leading-relaxed font-medium text-muted">
+                      Paste a YouTube link into the box above. For a one-click route, drag the bookmarklet to your bookmarks bar and click it on any
+                      YouTube video.
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Bookmarklet />
+                    <button type="button" onClick={onSetup} className="text-[13px] font-bold text-coral-text hover:text-coral-deep">
+                      Setup guide
+                    </button>
+                  </div>
+                </Card>
               )}
             </section>
 
@@ -118,7 +105,8 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
               <div className="flex flex-col gap-1">
                 <SectionLabel className="text-muted">How it works</SectionLabel>
                 <span className="text-[13px] leading-relaxed font-medium text-faint">
-                  Pick a song. It plays from YouTube, lyrics come from LRCLIB, and every line is plain text for Yomitan. Start capture to record audio for cards.
+                  Songs play from YouTube, lyrics come from LRCLIB, and every line is plain text for Yomitan. Start capture to record audio for
+                  cards.
                 </span>
               </div>
               <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
@@ -135,16 +123,26 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
   )
 }
 
-function SkeletonCard() {
+/**
+ * Draggable bookmarklet link. React refuses `javascript:` hrefs, so the attribute is set imperatively.
+ * Clicking it in place does nothing useful, so the click is swallowed.
+ */
+export function Bookmarklet() {
+  const ref = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    ref.current?.setAttribute('href', bookmarkletHref())
+  }, [])
   return (
-    <div className="flex animate-pulse flex-col overflow-hidden rounded-2xl border border-line bg-card shadow-card-sm">
-      <div className="aspect-video bg-soft" />
-      <div className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
-        <div className="h-3.5 w-[85%] rounded bg-soft" />
-        <div className="h-3.5 w-[55%] rounded bg-soft" />
-        <div className="h-3 w-[40%] rounded bg-line-soft" />
-      </div>
-    </div>
+    <a
+      ref={ref}
+      onClick={(e) => e.preventDefault()}
+      draggable
+      title="Drag me to your bookmarks bar"
+      className="inline-flex h-11 cursor-grab items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-coral bg-coral-wash px-4 text-[13px] font-bold text-coral-deep active:cursor-grabbing"
+    >
+      <span className="size-2 rounded-full bg-coral" /> Mine in LyricMiner
+      <span className="font-medium text-coral-text/70">· drag to bookmarks</span>
+    </a>
   )
 }
 

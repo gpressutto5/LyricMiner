@@ -1,16 +1,43 @@
 import type { TrackInfo } from '../../shared/types'
 import type { Settings } from './storage'
 
+export const ANKI_URL = 'http://127.0.0.1:8765'
+
+export const ANKI_UNREACHABLE =
+  "Can't reach AnkiConnect. Make sure Anki is open with the AnkiConnect add-on, and that this site is listed in its webCorsOriginList (see Setup)."
+
+/**
+ * Call AnkiConnect straight from the browser. Browsers allow an https page to talk to 127.0.0.1, but
+ * AnkiConnect only answers origins in its `webCorsOriginList`, so a network error usually means either
+ * Anki is closed or this site has not been allowed yet.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function invoke<T = any>(action: string, params: Record<string, unknown> = {}): Promise<T> {
-  const r = await fetch('/api/anki', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, version: 6, params }),
-  })
+export async function invoke<T = any>(action: string, params: Record<string, unknown> = {}, timeoutMs = 30000): Promise<T> {
+  let r: Response
+  try {
+    r = await fetch(ANKI_URL, {
+      method: 'POST',
+      // text/plain keeps the request "simple" (no CORS preflight); AnkiConnect parses the body as JSON regardless.
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action, version: 6, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch {
+    throw new Error(ANKI_UNREACHABLE)
+  }
   const j = (await r.json()) as { result: T; error: string | null }
   if (j.error) throw new Error(j.error)
   return j.result
+}
+
+/** True when AnkiConnect answers this origin. */
+export async function ankiAlive(): Promise<boolean> {
+  try {
+    await invoke('version', {}, 1500)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export interface Media {

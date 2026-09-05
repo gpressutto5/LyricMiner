@@ -68,3 +68,21 @@ export function saveLyrics(id: string, l: SavedLyrics | null) {
     /* ignore */
   }
 }
+
+const SETUP_KEY = 'lyricminer.setupDone'
+
+export function isSetupDone(): boolean {
+  try {
+    return localStorage.getItem(SETUP_KEY) === '1'
+  } catch {
+    return true
+  }
+}
+
+export function markSetupDone() {
+  try {
+    localStorage.setItem(SETUP_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}

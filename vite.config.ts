@@ -9,9 +9,8 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, 'web/src') },
   },
-  server: {
-    port: 5173,
-    proxy: { '/api': 'http://localhost:8787' },
-  },
+  // Relative base so the build works at a domain root or under a sub-path (e.g. GitHub Pages).
+  base: './',
+  server: { port: 5173 },
   build: { outDir: '../dist', emptyOutDir: true },
 })

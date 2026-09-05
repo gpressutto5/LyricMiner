@@ -1,37 +1,38 @@
 # LyricMiner
 
-Learn a language from the music you already listen to. Search a song on YouTube, get time-synced lyrics, step
+Learn a language from the music you already listen to. Open a YouTube song, get time-synced lyrics, step
 through the lines with the arrow keys while Yomitan scans the text, and push audio / image / sentence into the Anki
 card you just made.
 
-> **This branch (`iframe-capture`)** plays songs through the official YouTube embed instead of downloading them,
-> and records the tab's own audio while you listen so lines can still be clipped for Anki. Nothing is downloaded
-> and no ffmpeg / yt-dlp is needed for mining. See [How capture works](#how-capture-works).
+LyricMiner is a static website: nothing to install and no server. Songs play through the YouTube embed, lyrics come
+straight from [LRCLIB](https://lrclib.net), cards go straight to AnkiConnect on your machine, and clip audio is
+recorded from the tab while you listen.
 
 ## Requirements
 
-- Node 20+
-- Chrome or Edge (tab audio capture is Chromium-only; Firefox and Safari can play and read, but not mine clips)
-- Anki with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on, for card mining
-- [Yomitan](https://yomitan.wiki/) in your browser, for lookups
-- yt-dlp, only for the YouTube *search* box (a binary is fetched into `node_modules` on `npm install`). Pasting a
-  YouTube link works without it.
+- Chrome or Edge. Tab audio capture is Chromium-only; Firefox and Safari can play and read lyrics but not mine clips.
+- Anki with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on. Add the site's origin to
+  AnkiConnect's `webCorsOriginList` (the in-app **Setup** guide shows the exact value with a copy button).
+- [Yomitan](https://yomitan.wiki/) in your browser, for lookups.
 
-## Run
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173 and add `http://localhost:5173` to `webCorsOriginList`.
 
-For a production build: `npm run build && npm start` (serves everything on http://localhost:8787).
+`npm run build` writes a static site to `dist/` (relative asset paths, so it works at a domain root or a sub-path).
+The included GitHub Actions workflow deploys `main` to GitHub Pages; enable Pages → "GitHub Actions" in the repo
+settings once.
 
 ## How to use
 
-1. Search for a song (or paste a YouTube URL). It plays in an embedded YouTube player; songs you open are kept in
-   the library (browser storage).
+1. Paste a YouTube link into the box (a website can't search YouTube itself; the in-app **Setup** guide has a
+   bookmarklet that sends the video you're watching here in one click). Songs you open are kept in the library
+   (browser storage).
 2. Synced lyrics are fetched from [LRCLIB](https://lrclib.net) automatically. If the wrong version is picked
    (romaji instead of kana, for example) hit **Change** in the bar above the lyrics and choose another result, or paste your
    own LRC. Use the **Offset** control if the highlight runs early or late.
@@ -74,10 +75,10 @@ Limitations: the recording lives in memory for the current page; some label-owne
 
 ## Layout
 
-- `server/` — Express API: yt-dlp search, LRCLIB and AnkiConnect proxies (download / clip / frame endpoints are
-  no longer used by the front end on this branch)
-- `web/` — Vite + React front end
-- `shared/` — types shared by both
+- `web/` — Vite + React front end (everything)
+- `shared/` — types
+- `download-server` branch — the earlier version with a Node server that downloads media with yt-dlp and clips it with
+  ffmpeg; kept for reference
 
 ---
 

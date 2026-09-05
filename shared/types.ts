@@ -1,11 +1,3 @@
-export interface SearchResult {
-  id: string
-  title: string
-  channel: string
-  duration: number | null
-  thumbnail: string
-}
-
 export interface TrackInfo {
   id: string
   title: string
@@ -19,15 +11,6 @@ export interface TrackInfo {
   ready: boolean
 }
 
-export type JobState = 'idle' | 'downloading' | 'ready' | 'error'
-
-export interface JobStatus {
-  state: JobState
-  progress: number
-  phase: string
-  error?: string
-}
-
 export interface LyricsResult {
   id: number
   trackName: string
@@ -37,10 +20,4 @@ export interface LyricsResult {
   instrumental: boolean
   syncedLyrics: string | null
   plainLyrics: string | null
-}
-
-export interface Health {
-  ytdlp: string | null
-  ffmpeg: boolean
-  anki: boolean
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from 'cn'
 import type { LyricsResult, TrackInfo } from '../../shared/types'
-import { api } from './api'
+import { lyricsSearch } from './api'
 import { SectionLabel, Stepper } from './components/primitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,7 +51,7 @@ export function LyricsSource({ info, saved, onChange, trailing }: Props) {
       attempts.push({ q: [t, a].filter(Boolean).join(' ') })
       let res: LyricsResult[] = []
       for (const attempt of attempts) {
-        res = await api.lyricsSearch(attempt)
+        res = await lyricsSearch(attempt)
         if (res.some((r) => r.syncedLyrics)) break
       }
       setResults(res)

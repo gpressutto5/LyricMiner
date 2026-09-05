@@ -1,17 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "lyricminer",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 5173
-    },
-    {
-      "name": "lyricminer-web-5175",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--port", "5175", "--strictPort"],
-      "port": 5175
-    }
+    { "name": "lyricminer", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 },
+    { "name": "lyricminer-web-5175", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "--port", "5175", "--strictPort"], "port": 5175 }
   ]
 }
