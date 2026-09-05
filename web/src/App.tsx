@@ -7,6 +7,7 @@ import { api, parseYouTubeId } from './api'
 import { SearchView } from './SearchView'
 import { SettingsDialog } from './SettingsDialog'
 import { TrackView } from './TrackView'
+import { captureSupported } from './capture'
 import { loadSettings, saveSettings, type Settings } from './storage'
 
 export type ToastKind = 'ok' | 'bad' | 'info'
@@ -73,12 +74,13 @@ export default function App() {
     setSearch((s) => ({ q: text, nonce: s.nonce + 1 }))
   }
 
-  const failing = health ? [!health.anki && 'Anki', !health.ytdlp && 'yt-dlp', !health.ffmpeg && 'ffmpeg'].filter(Boolean) : []
+  const capture = captureSupported()
+  const failing = health ? [!health.anki && 'Anki', !capture && 'Tab capture'].filter(Boolean) : []
   const statusTone = health === null ? 'bg-soft text-muted' : failing.length ? 'bg-bad-tint text-bad-text' : 'bg-ok-tint text-ok-text'
   const statusDot = health === null ? 'bg-faint' : failing.length ? 'bg-bad' : 'bg-ok'
-  const statusText = health === null ? 'Checking tools…' : failing.length ? `${failing.join(' · ')} unavailable` : 'Anki · yt-dlp · ffmpeg'
+  const statusText = health === null ? 'Checking tools…' : failing.length ? `${failing.join(' · ')} unavailable` : 'Anki · Tab capture'
   const statusTitle = health
-    ? `Anki: ${health.anki ? 'connected' : 'not reachable (is Anki open?)'}\nyt-dlp: ${health.ytdlp ?? 'not found'}\nffmpeg: ${health.ffmpeg ? 'on PATH' : 'not found'}`
+    ? `Anki: ${health.anki ? 'connected' : 'not reachable (is Anki open?)'}\nTab capture: ${capture ? 'supported' : 'not supported in this browser (use Chrome or Edge)'}`
     : 'Cannot reach the LyricMiner server'
 
   return (

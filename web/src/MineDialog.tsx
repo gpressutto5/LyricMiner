@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Pause, Play, X } from 'lucide-react'
 import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
 import { addCard, buildSongTag, updateLastCard, type CardPayload } from './anki'
-import { api, fetchBase64 } from './api'
+import { blobToBase64 } from './api'
+import type { TabCapture } from './capture'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
@@ -21,6 +22,7 @@ export interface MineTarget {
 
 interface Props {
   track: TrackInfo
+  capture: TabCapture
   target: MineTarget
   settings: Settings
   onClose: () => void
@@ -35,6 +37,7 @@ export function buildFilename(track: TrackInfo, start: number, end: number, ext:
 
 export async function buildPayload(
   track: TrackInfo,
+  capture: TabCapture,
   text: string,
   start: number,
   end: number,
@@ -49,14 +52,19 @@ export async function buildPayload(
   const jobs: Promise<void>[] = []
   if (opts.audio) {
     jobs.push(
-      fetchBase64(api.clipUrl(track.id, start, end)).then((data) => {
-        payload.audio = { data, filename: buildFilename(track, start, end, 'mp3') }
-      }),
+      capture
+        .clip(start, end)
+        .then(blobToBase64)
+        .then((data) => {
+          payload.audio = { data, filename: buildFilename(track, start, end, 'mp3') }
+        }),
     )
   }
   if (opts.image) {
+    const frame = capture.frameAt(imageTime)
+    if (!frame) throw new Error('No captured frame near that moment. Play through this line once, or turn the image off.')
     jobs.push(
-      fetchBase64(api.frameUrl(track.id, imageTime)).then((data) => {
+      blobToBase64(frame).then((data) => {
         payload.image = { data, filename: `lyricminer_${track.id}_${ms(imageTime)}.jpg` }
       }),
     )
@@ -65,7 +73,7 @@ export async function buildPayload(
   return payload
 }
 
-export function MineDialog({ track, target, settings, onClose, toast }: Props) {
+export function MineDialog({ track, capture, target, settings, onClose, toast }: Props) {
   const [text, setText] = useState(target.text)
   const [start, setStart] = useState(Math.max(0, target.start - settings.padStart))
   const [end, setEnd] = useState(Math.min(track.duration || Infinity, target.end + settings.padEnd))
@@ -75,40 +83,75 @@ export function MineDialog({ track, target, settings, onClose, toast }: Props) {
   const [incSentence, setIncSentence] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState(false)
+  const [previewBusy, setPreviewBusy] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const previewUrl = useRef<string | null>(null)
 
-  // Trim edits invalidate the preview clip; stop playback so the next preview fetches the new range.
-  useEffect(() => {
+  const dropPreview = () => {
     const a = audioRef.current
     if (a) {
       a.pause()
       a.removeAttribute('src')
       a.load()
     }
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+    previewUrl.current = null
     setPreviewing(false)
+  }
+  // Trim edits invalidate the preview clip; stop playback so the next preview cuts the new range.
+  useEffect(() => {
+    dropPreview()
+    return dropPreview
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start, end])
+
+  const captured = capture.has(start, end)
+  const frame = useMemo(() => capture.frameAt(imageTime), [capture, imageTime])
+  // Object URL lifecycle lives entirely inside the effect so StrictMode's double-invoke can't revoke a live URL.
+  const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!frame) {
+      setFrameUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(frame)
+    setFrameUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [frame])
 
   const nudge = (which: 'start' | 'end', d: number) => {
     if (which === 'start') setStart((s) => Math.max(0, Math.min(end - 0.1, +(s + d).toFixed(3))))
     else setEnd((e) => Math.max(start + 0.1, Math.min(track.duration || Infinity, +(e + d).toFixed(3))))
   }
 
-  const togglePreview = () => {
+  const togglePreview = async () => {
     const a = audioRef.current
-    if (!a) return
+    if (!a || previewBusy) return
     if (previewing) {
       a.pause()
       return
     }
-    if (!a.getAttribute('src')) a.src = api.clipUrl(track.id, start, end)
-    void a.play().catch(() => setPreviewing(false))
+    try {
+      if (!previewUrl.current) {
+        setPreviewBusy(true)
+        const blob = await capture.clip(start, end)
+        previewUrl.current = URL.createObjectURL(blob)
+        a.src = previewUrl.current
+      }
+      await a.play()
+    } catch (e) {
+      setPreviewing(false)
+      toast((e as Error).message, 'bad')
+    } finally {
+      setPreviewBusy(false)
+    }
   }
 
   const run = async (mode: 'update' | 'add') => {
     if (busy) return
     setBusy(mode)
     try {
-      const payload = await buildPayload(track, text, start, end, imageTime, { audio: incAudio, image: incImage, sentence: incSentence }, settings)
+      const payload = await buildPayload(track, capture, text, start, end, imageTime, { audio: incAudio, image: incImage, sentence: incSentence }, settings)
       if (mode === 'update') {
         const r = await updateLastCard(payload, settings)
         toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
@@ -172,7 +215,7 @@ export function MineDialog({ track, target, settings, onClose, toast }: Props) {
             <IncludeRow checked={incAudio} onChange={setIncAudio} label="Audio" field={settings.audioField} />
             <div className="flex justify-between text-xs font-bold text-muted tabular-nums">
               <span>{formatTimeMs(start)}</span>
-              <span className="text-coral-text">{(end - start).toFixed(2)} s</span>
+              <span className={captured ? 'text-coral-text' : 'text-bad-text'}>{captured ? `${(end - start).toFixed(2)} s` : 'not captured yet'}</span>
               <span>{formatTimeMs(end)}</span>
             </div>
             <div className="flex flex-col gap-2">
@@ -182,11 +225,12 @@ export function MineDialog({ track, target, settings, onClose, toast }: Props) {
             <div className="flex items-center justify-between">
               <button
                 type="button"
-                onClick={togglePreview}
-                className="flex h-9 items-center gap-2 rounded-full bg-ink pr-3.5 pl-2.5 text-[13px] font-bold text-white hover:bg-ink-2"
+                onClick={() => void togglePreview()}
+                disabled={!captured || previewBusy}
+                className="flex h-9 items-center gap-2 rounded-full bg-ink pr-3.5 pl-2.5 text-[13px] font-bold text-white hover:bg-ink-2 disabled:opacity-40"
               >
                 {previewing ? <Pause className="size-3" fill="currentColor" /> : <Play className="size-3" fill="currentColor" />}
-                {previewing ? 'Stop' : 'Preview clip'}
+                {previewBusy ? 'Cutting…' : previewing ? 'Stop' : 'Preview clip'}
               </button>
               <audio ref={audioRef} preload="none" onPlay={() => setPreviewing(true)} onPause={() => setPreviewing(false)} onEnded={() => setPreviewing(false)} />
               <button
@@ -205,7 +249,13 @@ export function MineDialog({ track, target, settings, onClose, toast }: Props) {
           {/* Image */}
           <div className={cn('flex flex-col gap-3.5 rounded-2xl border border-line p-4 transition-opacity', !incImage && 'opacity-60')}>
             <IncludeRow checked={incImage} onChange={setIncImage} label="Image" field={settings.imageField} />
-            <img className="aspect-video w-full rounded-xl bg-black object-contain" src={api.frameUrl(track.id, imageTime)} alt="" />
+            {frameUrl ? (
+              <img className="aspect-video w-full rounded-xl bg-black object-contain" src={frameUrl} alt="" />
+            ) : (
+              <div className="flex aspect-video w-full items-center justify-center rounded-xl bg-ink px-4 text-center text-xs font-semibold text-white/70">
+                No frame captured near this moment yet
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button type="button" onClick={() => setImageTime((t) => Math.max(0, t - 1))} className="h-9 rounded-full bg-soft px-3.5 text-[13px] font-bold text-ink-2 hover:bg-line-soft">
                 −1 s

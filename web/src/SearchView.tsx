@@ -4,6 +4,7 @@ import { cn } from 'cn'
 import type { SearchResult, TrackInfo } from '../../shared/types'
 import type { SearchRequest, ToastFn } from './App'
 import { api } from './api'
+import { forgetTrack, loadLibrary } from './library'
 import { Card, Key, SectionLabel } from './components/primitives'
 import { formatTime } from './lrc'
 
@@ -18,12 +19,7 @@ interface Props {
 export function SearchView({ request, onOpen, onClear, toast }: Props) {
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [busy, setBusy] = useState(false)
-  const [library, setLibrary] = useState<TrackInfo[]>([])
-
-  const loadLibrary = () => api.tracks().then(setLibrary).catch(() => {})
-  useEffect(() => {
-    void loadLibrary()
-  }, [])
+  const [library, setLibrary] = useState<TrackInfo[]>(loadLibrary)
 
   useEffect(() => {
     if (!request.q) return
@@ -41,11 +37,11 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request.nonce])
 
-  const remove = async (e: React.MouseEvent, id: string) => {
+  const remove = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    if (!confirm('Remove this song from the local library? (Saved lyrics selection is kept.)')) return
-    await api.deleteTrack(id)
-    void loadLibrary()
+    if (!confirm('Remove this song from your library? (Saved lyrics selection is kept.)')) return
+    forgetTrack(id)
+    setLibrary(loadLibrary())
   }
 
   const searching = !!request.q
@@ -98,7 +94,7 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
               <div className="flex items-baseline gap-3">
                 <SectionLabel className="text-muted">Library</SectionLabel>
                 <span className="text-[13px] font-medium text-faint">
-                  {library.length ? `${library.length} ${library.length === 1 ? 'song' : 'songs'} downloaded` : 'Songs you open are downloaded once and kept here. Search above to add your first one.'}
+                  {library.length ? `${library.length} ${library.length === 1 ? 'song' : 'songs'}` : 'Songs you open are kept here. Search above to add your first one.'}
                 </span>
               </div>
               {library.length > 0 && (
@@ -122,7 +118,7 @@ export function SearchView({ request, onOpen, onClear, toast }: Props) {
               <div className="flex flex-col gap-1">
                 <SectionLabel className="text-muted">How it works</SectionLabel>
                 <span className="text-[13px] leading-relaxed font-medium text-faint">
-                  Pick a song. It downloads once, lyrics come from LRCLIB, and every line is plain text for Yomitan.
+                  Pick a song. It plays from YouTube, lyrics come from LRCLIB, and every line is plain text for Yomitan. Start capture to record audio for cards.
                 </span>
               </div>
               <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">

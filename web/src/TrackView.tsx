@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Pause, Play, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
-import type { JobStatus, TrackInfo } from '../../shared/types'
+import { Circle, ExternalLink, Pause, Play, RotateCcw, SkipBack, SkipForward, Square } from 'lucide-react'
+import { cn } from 'cn'
+import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
 import { updateLastCard } from './anki'
-import { api } from './api'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Card, Kbd, Pill, RoundButton } from './components/primitives'
+import { captureSupported, TabCapture, type Coverage } from './capture'
 import { formatTime, parseLrc } from './lrc'
+import { rememberTrack } from './library'
 import { LyricsList } from './LyricsList'
 import { LyricsSource } from './LyricsSource'
 import { buildPayload, MineDialog, type MineTarget } from './MineDialog'
 import { loadLyrics, saveLyrics, type SavedLyrics, type Settings } from './storage'
 import { usePlayer, usePlayerTime, type Player } from './usePlayer'
+import { fetchOEmbed, YouTubeTransport } from './youtube'
 
 interface Props {
   id: string
@@ -29,33 +32,82 @@ const FONT_MAX = 48
 
 export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props) {
   const [info, setInfo] = useState<TrackInfo | null>(null)
-  const [status, setStatus] = useState<JobStatus>({ state: 'idle', progress: 0, phase: '' })
+  const [transport, setTransport] = useState<YouTubeTransport | null>(null)
+  const [ready, setReady] = useState(false)
+  const [playerError, setPlayerError] = useState<string | null>(null)
+  const [capture, setCapture] = useState<TabCapture | null>(null)
+  const [captureBusy, setCaptureBusy] = useState(false)
   const [saved, setSaved] = useState<SavedLyrics | null>(() => loadLyrics(id))
   const [mineTarget, setMineTarget] = useState<MineTarget | null>(null)
   const [quickBusy, setQuickBusy] = useState(false)
+  const playerHost = useRef<HTMLDivElement>(null)
+  const playerBox = useRef<HTMLDivElement>(null)
 
   const lines = useMemo(() => (saved ? parseLrc(saved.lrc, info?.duration) : []), [saved?.lrc, info?.duration])
   const offset = saved?.offset ?? 0
 
-  // Kick off (or resume) the download and poll until the media is ready.
+  // Create the YouTube player once per track.
   useEffect(() => {
-    let alive = true
-    let timer = 0
-    const apply = (r: { info: TrackInfo | null; status: JobStatus }) => {
-      if (!alive) return
-      setStatus(r.status)
-      if (r.info) setInfo(r.info)
-      if (r.status.state === 'downloading' || r.status.state === 'idle') {
-        timer = window.setTimeout(() => api.status(id).then(apply).catch(fail), 700)
-      }
-    }
-    const fail = (e: Error) => alive && setStatus({ state: 'error', progress: 0, phase: '', error: e.message })
-    api.download(id).then(apply).catch(fail)
+    const host = playerHost.current
+    if (!host) return
+    const mount = document.createElement('div')
+    host.appendChild(mount)
+    const tr = new YouTubeTransport(mount, id)
+    setTransport(tr)
+    const offReady = tr.on('ready', () => {
+      setReady(true)
+      setInfo((prev) => (prev ? { ...prev, duration: tr.duration || prev.duration } : prev))
+    })
+    const offErr = tr.on('error', (msg) => setPlayerError(String(msg)))
     return () => {
-      alive = false
-      clearTimeout(timer)
+      offReady()
+      offErr()
+      tr.destroy()
+      mount.remove()
+      setTransport(null)
+      setReady(false)
     }
   }, [id])
+
+  // Title / channel from oEmbed; duration arrives from the player.
+  useEffect(() => {
+    let alive = true
+    fetchOEmbed(id)
+      .then((o) => {
+        if (!alive) return
+        setInfo((prev) => ({
+          id,
+          title: o.title,
+          channel: o.author_name,
+          duration: prev?.duration ?? 0,
+          thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+          url: `https://www.youtube.com/watch?v=${id}`,
+          ready: true,
+        }))
+      })
+      .catch((e: Error) => alive && setPlayerError((prev) => prev ?? e.message))
+    return () => {
+      alive = false
+    }
+  }, [id])
+
+  useEffect(() => {
+    if (info && info.duration) rememberTrack(info)
+  }, [info])
+
+  // Dev-only handle for poking at the player and capture from the console / e2e tests.
+  useEffect(() => {
+    if (import.meta.env.DEV) (window as unknown as { __lm?: unknown }).__lm = { transport, capture }
+  }, [transport, capture])
+
+  // Stop recording when leaving the track.
+  useEffect(() => () => capture?.stop(), [capture])
+  useEffect(() => {
+    if (!capture) return
+    const onStop = () => setCapture(null)
+    capture.addEventListener('stop', onStop)
+    return () => capture.removeEventListener('stop', onStop)
+  }, [capture])
 
   const changeLyrics = (l: SavedLyrics | null) => {
     setSaved(l)
@@ -63,12 +115,27 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
   }
 
   const player = usePlayer({
+    transport,
     lines,
     offset,
     keyboardEnabled: !mineTarget && !modalOpen,
     onMine: () => openMine(),
     onQuickUpdate: () => void quickUpdate(),
   })
+
+  const startCapture = async () => {
+    if (!transport || captureBusy) return
+    setCaptureBusy(true)
+    try {
+      const c = await TabCapture.start(transport, () => playerBox.current?.getBoundingClientRect() ?? null)
+      setCapture(c)
+      toast('Capturing. Lines become mineable once you have heard them.', 'ok')
+    } catch (e) {
+      toast((e as Error).message, 'bad')
+    } finally {
+      setCaptureBusy(false)
+    }
+  }
 
   /** The line to mine: an explicit index, or the line at (or just before) the playhead. */
   const lineFor = (i?: number) => {
@@ -77,9 +144,10 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
   }
 
   const openMine = (i?: number) => {
+    if (!capture) return toast('Start capture first so the audio can be clipped.', 'bad')
     const line = lineFor(i)
     if (!line) return toast('No lyric line to mine yet.', 'bad')
-    player.videoRef.current?.pause()
+    transport?.pause()
     setMineTarget({ text: line.text, start: line.start, end: line.end })
   }
   // Stable identity for the memoized lyrics list; the ref always points at the latest closure.
@@ -89,6 +157,7 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
 
   const quickUpdate = async () => {
     if (!info || quickBusy) return
+    if (!capture) return toast('Start capture first so the audio can be clipped.', 'bad')
     const line = lineFor()
     if (!line) return toast('No lyric line to mine yet.', 'bad')
     setQuickBusy(true)
@@ -96,7 +165,7 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     try {
       const start = Math.max(0, line.start - settings.padStart)
       const end = line.end + settings.padEnd
-      const payload = await buildPayload(info, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
+      const payload = await buildPayload(info, capture, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
       const r = await updateLastCard(payload, settings)
       toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
     } catch (e) {
@@ -106,35 +175,28 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     }
   }
 
-  const ready = status.state === 'ready'
   const duration = player.duration || info?.duration || 0
+  const canMine = ready && !!capture && lines.length > 0
   const setFontSize = (d: number) => onSettings({ ...settings, fontSize: Math.max(FONT_MIN, Math.min(FONT_MAX, settings.fontSize + d)) })
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] gap-5 px-7 pt-2 pb-7 max-[900px]:grid-cols-1 max-[900px]:grid-rows-[auto_minmax(0,1fr)]">
       {/* Player */}
       <Card className="flex flex-col gap-4 self-start p-4">
-        <div className="relative aspect-video overflow-hidden rounded-[14px] bg-black">
-          {ready && <video ref={player.videoRef} src={api.mediaUrl(id)} playsInline className="block h-full w-full" {...player.videoProps} />}
-          {!ready && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-ink text-[13px] font-semibold text-white/70">
-              {status.state === 'error' ? (
-                <>
-                  <div className="font-bold text-white">Download failed</div>
-                  <div className="px-4 text-center text-xs font-medium">{status.error}</div>
-                  <Button size="sm" variant="secondary" className="mt-1 rounded-full font-bold" onClick={() => api.download(id).then((r) => setStatus(r.status))}>
-                    Retry
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div>{status.phase === 'merging' || status.phase === 'remuxing' ? 'Finishing up…' : 'Downloading…'}</div>
-                  <div className="h-1.5 w-[60%] overflow-hidden rounded-full bg-white/15">
-                    <div className="h-full rounded-full bg-coral transition-[width]" style={{ width: `${status.progress}%` }} />
-                  </div>
-                  <div className="text-xs tabular-nums">{status.progress.toFixed(0)}%</div>
-                </>
-              )}
+        <div ref={playerBox} className="relative aspect-video overflow-hidden rounded-[14px] bg-black">
+          <div ref={playerHost} className="absolute inset-0 [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full" />
+          {/* Keeps clicks (and keyboard focus) out of the iframe; click toggles playback like a <video>. */}
+          {ready && !playerError && <button type="button" aria-label="Play / pause" onClick={player.togglePlay} className="absolute inset-0 cursor-pointer" />}
+          {!ready && !playerError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-ink text-[13px] font-semibold text-white/70">Loading player…</div>
+          )}
+          {playerError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-ink px-5 text-center text-[13px] font-semibold text-white/70">
+              <div className="font-bold text-white">Can't play here</div>
+              <div className="text-xs font-medium">{playerError}</div>
+              <a href={`https://www.youtube.com/watch?v=${id}`} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">
+                Open on YouTube <ExternalLink className="size-3" />
+              </a>
             </div>
           )}
         </div>
@@ -144,7 +206,7 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
           <div className="text-[13px] font-medium text-muted">{info?.channel}</div>
         </div>
 
-        <SeekBar player={player} duration={duration} disabled={!ready} />
+        <SeekBar player={player} duration={duration} disabled={!ready} capture={capture} />
 
         <div className="flex items-center justify-center gap-3">
           <RoundButton label="Previous line (←)" onClick={player.prevLine} disabled={!ready}>
@@ -183,11 +245,13 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
           </Select>
         </div>
 
+        <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} />
+
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2.5">
-          <Button variant="outline" onClick={() => openMine()} disabled={!ready || !lines.length} className="h-12 rounded-[14px] border-[1.5px] font-bold shadow-none" title="Open mining dialog">
+          <Button variant="outline" onClick={() => openMine()} disabled={!canMine} className="h-12 rounded-[14px] border-[1.5px] font-bold shadow-none" title="Open mining dialog">
             Mine… <Kbd>M</Kbd>
           </Button>
-          <Button onClick={() => void quickUpdate()} disabled={!ready || !lines.length || quickBusy} className="h-12 rounded-[14px] font-bold" title="Update last Anki card with this line">
+          <Button onClick={() => void quickUpdate()} disabled={!canMine || quickBusy} className="h-12 rounded-[14px] font-bold" title="Update last Anki card with this line">
             {quickBusy ? 'Updating…' : 'Update last card'} <Kbd className="text-white/60">U</Kbd>
           </Button>
         </div>
@@ -222,16 +286,55 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
         </div>
       </Card>
 
-      {mineTarget && info && (
-        <MineDialog track={info} target={mineTarget} settings={settings} onClose={() => setMineTarget(null)} toast={toast} />
+      {mineTarget && info && capture && (
+        <MineDialog track={info} capture={capture} target={mineTarget} settings={settings} onClose={() => setMineTarget(null)} toast={toast} />
       )}
     </div>
   )
 }
 
-/** Seek slider + clock. Isolated so the ~12 updates/s playhead ticks only re-render this small subtree. */
-function SeekBar({ player, duration, disabled }: { player: Player; duration: number; disabled: boolean }) {
+/** Start / stop tab capture, with a hint about what it unlocks. */
+function CaptureRow({ capture, busy, disabled, onStart, onStop }: { capture: TabCapture | null; busy: boolean; disabled: boolean; onStart: () => void; onStop: () => void }) {
+  if (!captureSupported()) {
+    return (
+      <div className="rounded-[14px] bg-bad-tint px-4 py-3 text-[13px] font-medium text-bad-text">
+        This browser can't capture tab audio, so clips and images can't be mined here. Chrome or Edge can.
+      </div>
+    )
+  }
+  return (
+    <div className={cn('flex items-center gap-3 rounded-[14px] px-4 py-3', capture ? 'bg-ok-tint' : 'bg-soft')}>
+      <span className="relative flex size-2.5 shrink-0 items-center justify-center">
+        {capture && <span className="absolute inline-flex size-full animate-ping rounded-full bg-ok opacity-60" />}
+        <span className={cn('relative inline-flex size-2.5 rounded-full', capture ? 'bg-ok' : 'bg-faint')} />
+      </span>
+      <span className={cn('min-w-0 flex-1 text-[13px] font-medium', capture ? 'text-ok-text' : 'text-muted')}>
+        {capture ? 'Recording this tab. Lines you have heard can be mined.' : 'Share this tab to record audio for mining.'}
+      </span>
+      {capture ? (
+        <button type="button" onClick={onStop} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-bold text-ink hover:bg-line-soft">
+          <Square className="size-3" fill="currentColor" /> Stop
+        </button>
+      ) : (
+        <button type="button" onClick={onStart} disabled={disabled || busy} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-ink px-3 text-xs font-bold text-white hover:bg-ink-2 disabled:opacity-40">
+          <Circle className="size-3 text-coral" fill="currentColor" /> {busy ? 'Starting…' : 'Start capture'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Seek slider + clock + captured ranges. Isolated so the ~12 updates/s playhead ticks only re-render this small subtree. */
+function SeekBar({ player, duration, disabled, capture }: { player: Player; duration: number; disabled: boolean; capture: TabCapture | null }) {
   const time = usePlayerTime(player)
+  const [coverage, setCoverage] = useState<Coverage[]>([])
+  useEffect(() => {
+    if (!capture) return setCoverage([])
+    const tick = () => setCoverage(capture.coverage())
+    tick()
+    const i = setInterval(tick, 500)
+    return () => clearInterval(i)
+  }, [capture])
   return (
     <div className="flex flex-col gap-2">
       <Slider
@@ -243,6 +346,12 @@ function SeekBar({ player, duration, disabled }: { player: Player; duration: num
         disabled={disabled}
         aria-label="Seek"
       />
+      <div className="relative h-1 overflow-hidden rounded-full bg-soft" title="Captured audio">
+        {duration > 0 &&
+          coverage.map((c, i) => (
+            <span key={i} className="absolute top-0 h-full bg-ok" style={{ left: `${(c.start / duration) * 100}%`, width: `${((c.end - c.start) / duration) * 100}%` }} />
+          ))}
+      </div>
       <div className="flex justify-between text-xs font-semibold text-muted tabular-nums">
         <span>{formatTime(time)}</span>
         <span>{formatTime(duration)}</span>

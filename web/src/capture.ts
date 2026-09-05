@@ -1,0 +1,295 @@
+import { encodeMp3 } from './mp3'
+import type { Transport } from './transport'
+
+/**
+ * A stretch of uninterrupted playback at normal speed: wall-clock time and player time advance
+ * together, so any player time inside it maps to a fixed offset in the recording.
+ */
+interface Run {
+  /** performance.now() and player time at the first sample. */
+  wall0: number
+  t0: number
+  /** Latest sample. */
+  wall1: number
+  t1: number
+  rate: number
+  /** Running mean of (reported - predicted); corrects a slightly late/early first anchor. */
+  bias: number
+  n: number
+}
+
+export interface Coverage {
+  start: number
+  end: number
+}
+
+interface Frame {
+  t: number
+  blob: Blob
+}
+
+const SAMPLE_MS = 100
+const FRAME_MS = 500
+const MAX_DRIFT = 0.35
+const MAX_FRAMES = 1500
+const FRAME_WIDTH = 640
+const PEAK_TARGET = 0.95
+const MAX_GAIN = 4
+/**
+ * Recorded audio consistently lands ~55 ms later in the recording than the player-time mapping predicts
+ * (measured against ffmpeg cuts of the same video across several runs), so shift the window by that much.
+ */
+const CAPTURE_LATENCY = 0.055
+
+export function captureSupported(): boolean {
+  return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && typeof MediaRecorder !== 'undefined'
+}
+
+/**
+ * Records the current tab's audio (and periodic video frames of the player area) while the
+ * user listens, keeping a map from player time to recording time so any line that has been
+ * heard once can be clipped afterwards.
+ */
+export class TabCapture extends EventTarget {
+  private stream: MediaStream
+  private recorder: MediaRecorder
+  private chunks: Blob[] = []
+  private recStart = 0
+  private runs: Run[] = []
+  private frames: Frame[] = []
+  private video: HTMLVideoElement | null = null
+  private canvas = document.createElement('canvas')
+  private timer = 0
+  private lastFrameAt = 0
+  private grabbing = false
+  private decoded: { size: number; buffer: AudioBuffer } | null = null
+  private pendingData: (() => void)[] = []
+  stopped = false
+
+  private constructor(
+    stream: MediaStream,
+    private transport: Transport,
+    private getRect: () => DOMRect | null,
+  ) {
+    super()
+    this.stream = stream
+    const audioTracks = stream.getAudioTracks()
+    if (!audioTracks.length) {
+      stream.getTracks().forEach((t) => t.stop())
+      throw new Error('No tab audio was shared. Tick "Share tab audio" in the dialog and try again.')
+    }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m))
+    this.recorder = new MediaRecorder(new MediaStream(audioTracks), mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : undefined)
+    this.recorder.ondataavailable = (e) => {
+      if (e.data.size) this.chunks.push(e.data)
+      const waiters = this.pendingData
+      this.pendingData = []
+      waiters.forEach((w) => w())
+    }
+    this.recorder.onstart = () => {
+      this.recStart = performance.now()
+    }
+    this.recorder.start(1000)
+
+    const videoTrack = stream.getVideoTracks()[0]
+    if (videoTrack) {
+      const v = document.createElement('video')
+      v.muted = true
+      v.playsInline = true
+      v.srcObject = new MediaStream([videoTrack])
+      void v.play().catch(() => {})
+      this.video = v
+    }
+    stream.getTracks().forEach((t) => t.addEventListener('ended', () => this.stop()))
+    this.timer = window.setInterval(() => this.tick(), SAMPLE_MS)
+  }
+
+  /** Ask the browser to share this tab (user gesture required) and start recording. */
+  static async start(transport: Transport, getRect: () => DOMRect | null): Promise<TabCapture> {
+    if (!captureSupported()) throw new Error('This browser cannot capture tab audio. Use Chrome or Edge.')
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 5 },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        // Chromium-only hints: preselect this tab, allow sharing it, keep system audio out.
+        preferCurrentTab: true,
+        selfBrowserSurface: 'include',
+        systemAudio: 'exclude',
+        surfaceSwitching: 'exclude',
+      } as DisplayMediaStreamOptions)
+    } catch (e) {
+      const err = e as DOMException
+      if (err.name === 'NotAllowedError') throw new Error('Tab sharing was cancelled.')
+      throw new Error(`Could not start capture: ${err.message}`)
+    }
+    return new TabCapture(stream, transport, getRect)
+  }
+
+  private tick() {
+    if (this.stopped) return
+    const tr = this.transport
+    const now = performance.now()
+    if (tr.paused) return
+    const t = tr.currentTime
+    const rate = tr.rate
+    const last = this.runs[this.runs.length - 1]
+    if (last && last.rate === rate && now - last.wall1 < SAMPLE_MS * 5) {
+      const predicted = last.t0 + ((now - last.wall0) / 1000) * rate
+      const drift = t - predicted
+      if (Math.abs(drift - last.bias) < MAX_DRIFT) {
+        last.wall1 = now
+        last.t1 = t
+        last.n++
+        last.bias += (drift - last.bias) / last.n
+        this.maybeGrabFrame(t, now)
+        return
+      }
+    }
+    this.runs.push({ wall0: now, t0: t, wall1: now, t1: t, rate, bias: 0, n: 1 })
+    this.maybeGrabFrame(t, now)
+  }
+
+  private maybeGrabFrame(t: number, now: number) {
+    if (!this.video || this.grabbing || now - this.lastFrameAt < FRAME_MS) return
+    const rect = this.getRect()
+    const v = this.video
+    if (!rect || !v.videoWidth || rect.width < 10) return
+    this.lastFrameAt = now
+    // The captured surface is the tab's viewport; map CSS pixels to captured pixels. Inset a little so the
+    // player's rounded corners / card border don't end up in the card image.
+    const sx = v.videoWidth / window.innerWidth
+    const sy = v.videoHeight / window.innerHeight
+    const inset = 3
+    const srcX = (rect.left + inset) * sx
+    const srcY = (rect.top + inset) * sy
+    const srcW = (rect.width - inset * 2) * sx
+    const srcH = (rect.height - inset * 2) * sy
+    const w = Math.round(Math.min(FRAME_WIDTH, srcW))
+    const h = Math.round((srcH / srcW) * w)
+    this.canvas.width = w
+    this.canvas.height = h
+    const ctx = this.canvas.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, w, h)
+    this.grabbing = true
+    this.canvas.toBlob(
+      (blob) => {
+        this.grabbing = false
+        if (!blob) return
+        this.frames.push({ t, blob })
+        if (this.frames.length > MAX_FRAMES) this.frames.splice(0, this.frames.length - MAX_FRAMES)
+      },
+      'image/jpeg',
+      0.85,
+    )
+  }
+
+  /** Player-time ranges recorded at normal speed, merged and sorted. */
+  coverage(): Coverage[] {
+    const spans = this.runs
+      .filter((r) => r.rate === 1 && r.t1 - r.t0 > 0.2)
+      .map((r) => ({ start: r.t0, end: r.t1 }))
+      .sort((a, b) => a.start - b.start)
+    const out: Coverage[] = []
+    for (const s of spans) {
+      const last = out[out.length - 1]
+      if (last && s.start <= last.end + 0.05) last.end = Math.max(last.end, s.end)
+      else out.push({ ...s })
+    }
+    return out
+  }
+
+  /** The run (at 1x) that contains the whole [start, end] window, if any. */
+  private runFor(start: number, end: number): Run | null {
+    // Prefer the most recent matching run: it is what the user just heard.
+    for (let i = this.runs.length - 1; i >= 0; i--) {
+      const r = this.runs[i]
+      if (r.rate !== 1) continue
+      const lo = r.t0 + r.bias
+      const hi = r.t1 + r.bias
+      if (start >= lo - 0.05 && end <= hi + 0.05) return r
+    }
+    return null
+  }
+
+  has(start: number, end: number): boolean {
+    return !!this.runFor(start, end)
+  }
+
+  /** Flush the recorder so the chunk list includes everything up to now. */
+  private async flush(): Promise<void> {
+    if (this.recorder.state !== 'recording') return
+    await new Promise<void>((resolve) => {
+      this.pendingData.push(resolve)
+      this.recorder.requestData()
+    })
+  }
+
+  private async decodeAll(): Promise<AudioBuffer> {
+    await this.flush()
+    const blob = new Blob(this.chunks, { type: this.recorder.mimeType || 'audio/webm' })
+    if (this.decoded && this.decoded.size === blob.size) return this.decoded.buffer
+    const ctx = new OfflineAudioContext(1, 1, 48000)
+    const buffer = await ctx.decodeAudioData(await blob.arrayBuffer())
+    this.decoded = { size: blob.size, buffer }
+    return buffer
+  }
+
+  /** Cut [start, end] (player seconds) out of the recording and encode it as MP3. */
+  async clip(start: number, end: number): Promise<Blob> {
+    const run = this.runFor(start, end)
+    if (!run) throw new Error('This part of the song has not been captured yet. Play through it once at normal speed.')
+    const buffer = await this.decodeAll()
+    const recOffset = (run.wall0 - this.recStart) / 1000
+    const from = recOffset + (start - (run.t0 + run.bias)) + CAPTURE_LATENCY
+    const to = recOffset + (end - (run.t0 + run.bias)) + CAPTURE_LATENCY
+    const sr = buffer.sampleRate
+    const i0 = Math.max(0, Math.floor(from * sr))
+    const i1 = Math.min(buffer.length, Math.ceil(to * sr))
+    if (i1 - i0 < sr * 0.1) throw new Error('The captured audio for this line is too short. Try replaying it.')
+    const mono = new Float32Array(i1 - i0)
+    const chans = buffer.numberOfChannels
+    for (let c = 0; c < chans; c++) {
+      const data = buffer.getChannelData(c)
+      for (let i = 0; i < mono.length; i++) mono[i] += data[i0 + i] / chans
+    }
+    // YouTube plays most music several dB below full scale (loudness normalisation), so bring the
+    // peak back up. Capped so a near-silent stretch doesn't become noise.
+    let peak = 0
+    for (let i = 0; i < mono.length; i++) peak = Math.max(peak, Math.abs(mono[i]))
+    const gain = Math.min(PEAK_TARGET / (peak || 1), MAX_GAIN)
+    if (gain > 1) for (let i = 0; i < mono.length; i++) mono[i] *= gain
+    return encodeMp3(mono, sr)
+  }
+
+  /** Nearest captured frame to t, or null when none is within a second. */
+  frameAt(t: number): Blob | null {
+    let best: Frame | null = null
+    for (const f of this.frames) {
+      if (!best || Math.abs(f.t - t) < Math.abs(best.t - t)) best = f
+    }
+    return best && Math.abs(best.t - t) <= 1 ? best.blob : null
+  }
+
+  get frameCount() {
+    return this.frames.length
+  }
+
+  stop() {
+    if (this.stopped) return
+    this.stopped = true
+    clearInterval(this.timer)
+    try {
+      if (this.recorder.state !== 'inactive') this.recorder.stop()
+    } catch {
+      /* ignore */
+    }
+    this.stream.getTracks().forEach((t) => t.stop())
+    if (this.video) {
+      this.video.srcObject = null
+      this.video = null
+    }
+    this.dispatchEvent(new Event('stop'))
+  }
+}

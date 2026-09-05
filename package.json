@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.5",
     "express": "^5.2.1",

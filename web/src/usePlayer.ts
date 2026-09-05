@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LyricLine } from './lrc'
+import type { EventedTransport } from './transport'
 
 export interface PlayerOptions {
+  /** Playback surface; null until the player has been created. */
+  transport: EventedTransport | null
   lines: LyricLine[]
   offset: number
   keyboardEnabled: boolean
@@ -10,13 +13,14 @@ export interface PlayerOptions {
 }
 
 /**
- * Drives a <video> element with lyric-line awareness:
+ * Drives a Transport (the YouTube player) with lyric-line awareness:
  *  - tracks the active line at animation-frame precision
  *  - auto-pause at line end, or loop the current line
  *  - keyboard: ← prev, → next, ↑ repeat, space play/pause, A auto-pause, R repeat, M mine, U update last card
  */
-export function usePlayer({ lines, offset, keyboardEnabled, onMine, onQuickUpdate }: PlayerOptions) {
-  const videoRef = useRef<HTMLVideoElement>(null)
+export function usePlayer({ transport, lines, offset, keyboardEnabled, onMine, onQuickUpdate }: PlayerOptions) {
+  const videoRef = useRef<EventedTransport | null>(transport)
+  videoRef.current = transport
   /** Playhead subscribers (see usePlayerTime). Kept out of React state so the whole view doesn't re-render ~12×/s. */
   const timeListeners = useRef(new Set<(t: number) => void>())
   const [duration, setDuration] = useState(0)
@@ -111,10 +115,10 @@ export function usePlayer({ lines, offset, keyboardEnabled, onMine, onQuickUpdat
             const line = arr[a]
             if (t >= line.end) {
               if (repeatRef.current) {
-                v.currentTime = line.start
+                v.seek(line.start)
               } else if (autoPauseRef.current) {
                 v.pause()
-                v.currentTime = Math.max(line.start, line.end - 0.02)
+                v.seek(Math.max(line.start, line.end - 0.02))
                 pausedAtEndRef.current = a
               } else {
                 armedRef.current = c >= 0 && t >= arr[c].end ? c + 1 : c
@@ -135,8 +139,8 @@ export function usePlayer({ lines, offset, keyboardEnabled, onMine, onQuickUpdat
       if (!v) return
       const clamped = Math.max(0, Math.min(t, v.duration || t))
       arm(clamped)
-      v.currentTime = clamped
-      if (andPlay) void v.play().catch(() => {})
+      v.seek(clamped)
+      if (andPlay) v.play()
     },
     [arm],
   )
@@ -163,28 +167,37 @@ export function usePlayer({ lines, offset, keyboardEnabled, onMine, onQuickUpdat
   const togglePlay = useCallback(() => {
     const v = videoRef.current
     if (!v) return
-    if (v.paused) void v.play().catch(() => {})
+    if (v.paused) v.play()
     else v.pause()
   }, [])
 
-  const videoProps = {
-    onPlay: () => {
-      setPlaying(true)
-      const a = armedRef.current
-      if (pausedAtEndRef.current >= 0 && pausedAtEndRef.current === a) armedRef.current = a + 1
-      pausedAtEndRef.current = -1
-    },
-    onPause: () => setPlaying(false),
-    onEnded: () => setPlaying(false),
-    onLoadedMetadata: (e: React.SyntheticEvent<HTMLVideoElement>) => {
-      setDuration(e.currentTarget.duration || 0)
-      e.currentTarget.playbackRate = rate
-    },
-    onDurationChange: (e: React.SyntheticEvent<HTMLVideoElement>) => setDuration(e.currentTarget.duration || 0),
-  }
-
+  // Transport events -> React state. Re-subscribed whenever the transport instance changes.
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = rate
+    if (!transport) return
+    setDuration(transport.duration || 0)
+    setPlaying(!transport.paused)
+    const offs = [
+      transport.on('ready', () => {
+        setDuration(transport.duration || 0)
+        transport.setRate(rateRef.current)
+      }),
+      transport.on('play', () => {
+        setPlaying(true)
+        setDuration(transport.duration || 0)
+        const a = armedRef.current
+        if (pausedAtEndRef.current >= 0 && pausedAtEndRef.current === a) armedRef.current = a + 1
+        pausedAtEndRef.current = -1
+      }),
+      transport.on('pause', () => setPlaying(false)),
+      transport.on('ended', () => setPlaying(false)),
+    ]
+    return () => offs.forEach((off) => off())
+  }, [transport])
+
+  const rateRef = useRef(rate)
+  rateRef.current = rate
+  useEffect(() => {
+    videoRef.current?.setRate(rate)
   }, [rate])
 
   useEffect(() => {
@@ -243,8 +256,6 @@ export function usePlayer({ lines, offset, keyboardEnabled, onMine, onQuickUpdat
   }, [])
 
   return {
-    videoRef,
-    videoProps,
     subscribeTime,
     duration,
     playing,
