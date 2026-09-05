@@ -1,0 +1,114 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@theme {
+  --font-sans: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-jp: 'M PLUS 2', 'Manrope', 'Hiragino Sans', 'Noto Sans JP', 'Noto Sans CJK JP', sans-serif;
+
+  /* Palette — direction "C · Daylight" */
+  --color-canvas: #f6f3ee;
+  --color-card: #ffffff;
+  --color-line: #e6e1d8;
+  --color-line-soft: #efeae2;
+  --color-ink: #1c1a17;
+  --color-ink-2: #4b453f;
+  --color-muted: #77706a;
+  --color-faint: #9a938b;
+  --color-ghost: #c4beb5;
+  --color-soft: #f6f3ee;
+  --color-coral: #e0644d;
+  --color-coral-deep: #b8432c;
+  --color-coral-text: #d9583f;
+  --color-coral-tint: #fbe7e2;
+  --color-coral-wash: #fbf4ef;
+  --color-ok: #3f9a57;
+  --color-ok-text: #2f6b3f;
+  --color-ok-tint: #e8f4ea;
+  --color-bad: #c94a3a;
+  --color-bad-text: #a8372a;
+  --color-bad-tint: #fbe4e1;
+
+  --shadow-card: 0 1px 2px rgba(30, 20, 10, 0.04), 0 10px 30px rgba(30, 20, 10, 0.05);
+  --shadow-card-sm: 0 1px 2px rgba(30, 20, 10, 0.04), 0 6px 20px rgba(30, 20, 10, 0.04);
+  --shadow-dialog: 0 24px 60px rgba(20, 15, 10, 0.3);
+  --shadow-play: 0 6px 16px rgba(224, 100, 77, 0.35);
+}
+
+/* shadcn/ui semantic tokens mapped onto the palette. */
+:root {
+  --background: var(--color-canvas);
+  --foreground: var(--color-ink);
+  --card: var(--color-card);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-card);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-soft);
+  --secondary-foreground: var(--color-ink-2);
+  --muted: var(--color-soft);
+  --muted-foreground: var(--color-muted);
+  --accent: var(--color-soft);
+  --accent-foreground: var(--color-ink);
+  --destructive: var(--color-bad);
+  --border: var(--color-line);
+  --input: var(--color-line);
+  --ring: var(--color-coral);
+  --radius: 0.75rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  * {
+    border-color: var(--color-line);
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  input[type='number'] {
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+}
