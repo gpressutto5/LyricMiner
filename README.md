@@ -15,27 +15,14 @@ recorded from the tab while you listen.
   AnkiConnect's `webCorsOriginList` (the in-app **Setup** guide shows the exact value with a copy button).
 - [Yomitan](https://yomitan.wiki/) in your browser, for lookups.
 
-## Run locally
-
-```bash
-npm install
-npm run dev
-```
-
-Open http://localhost:5173 and add `http://localhost:5173` to `webCorsOriginList`.
-
-`npm run build` writes a static site to `dist/` (relative asset paths, so it works at a domain root or a sub-path).
-The included GitHub Actions workflow deploys `main` to GitHub Pages; enable Pages → "GitHub Actions" in the repo
-settings once.
-
 ## How to use
 
 1. Paste a YouTube link into the box (a website can't search YouTube itself; the in-app **Setup** guide has a
    bookmarklet that sends the video you're watching here in one click). Songs you open are kept in the library
    (browser storage).
-2. Synced lyrics are fetched from [LRCLIB](https://lrclib.net) automatically. If the wrong version is picked
-   (romaji instead of kana, for example) hit **Change** in the bar above the lyrics and choose another result, or paste your
-   own LRC. Use the **Offset** control if the highlight runs early or late.
+2. Synced lyrics are fetched from LRCLIB automatically. If the wrong version is picked (romaji instead of kana, for
+   example) hit **Change** in the bar above the lyrics and choose another result, or paste your own LRC. Use the
+   **Offset** control if the highlight runs early or late.
 3. Study. Click anywhere on a line to play it (the text itself stays selectable for Yomitan); the **+** in its
    left margin opens the mining dialog for that line. Or use the keyboard:
 
@@ -62,25 +49,29 @@ skipped.
 
 ## How capture works
 
-The browser cannot download YouTube media, but it can record what it plays. `Start capture` asks Chrome to share
-the current tab (`getDisplayMedia`). The audio track is recorded continuously with `MediaRecorder`, and a small
-timeline maps player time to recording time for every uninterrupted stretch of playback at 1×. Every half second
-a frame of the player area is grabbed from the shared video track. When you mine a line, the matching slice is cut
-with Web Audio, peak-normalised, encoded to MP3 in the browser, and sent to AnkiConnect together with the nearest
-frame. If the line has not been heard yet (or only at another speed), LyricMiner first seeks just before it, plays it
-through once at 1× with auto-pause and repeat suspended, restores the playhead, and then cuts the clip.
-
-Measured against ffmpeg cuts of the downloaded file, captured clips line up within about 50 ms.
+The browser cannot download YouTube media, but it can record what it plays. `Start capture` asks Chrome to share the
+current tab (`getDisplayMedia`); the audio track is recorded continuously with `MediaRecorder`, and a frame of the
+player area is grabbed every half second. When you mine a line, the matching slice is cut with Web Audio,
+peak-normalised, encoded to MP3 in the browser, and sent to AnkiConnect with the nearest frame. Measured against
+ffmpeg cuts of the downloaded file, captured clips line up within about 50 ms.
 
 Limitations: the recording lives in memory for the current page; some label-owned videos disable embedding
 ("Open on YouTube" is shown instead); the first listen has to happen in real time.
 
-## Layout
+## Development
 
-- `web/` — Vite + React front end (everything)
-- `shared/` — types
-- `download-server` branch — the earlier version with a Node server that downloads media with yt-dlp and clips it with
-  ffmpeg; kept for reference
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 and add that origin to `webCorsOriginList`.
+
+`npm run build` writes a static site to `dist/`, with relative asset paths so it works at a domain root or a sub-path.
+The included GitHub Actions workflow deploys `main` to GitHub Pages.
+
+The front end lives in `web/` (Vite + React) and shared types in `shared/`. The `download-server` branch keeps the
+earlier version that downloaded media with yt-dlp and clipped it with ffmpeg.
 
 ## Support
 
