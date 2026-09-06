@@ -51,9 +51,9 @@ settings once.
 
 4. Press **Start capture** and allow sharing this tab (keep "Share tab audio" ticked). From now on every line
    you hear is recorded; the green bar under the seek slider shows what has been captured.
-5. Mine: look a word up with Yomitan and add it to Anki as usual. Then press `U` (or **Update last card**) and
+5. Mine: look a word up with Yomitan and add it to Anki as usual. Then press `U` and
    LyricMiner writes the line's trimmed audio, a video frame and the sentence into that note.
-   Use `M` instead to fine-tune the audio start/end, pick a different frame, or edit the sentence before sending.
+   Press `M` to open **Mine** and fine-tune the audio start/end, pick a different frame, or edit the sentence before sending.
    **Add new card** creates a standalone note in the deck / note type chosen in Settings.
 
 Configure field names, deck and note type under **Settings**. Fields that don't exist on the target note type are

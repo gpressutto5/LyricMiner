@@ -248,14 +248,9 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
 
           <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} />
 
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2.5">
-            <Button variant="outline" onClick={() => openMine()} disabled={!canMine} className="h-12 rounded-[14px] border-[1.5px] font-bold shadow-none" title="Open mining dialog">
-              Mine… <Kbd>M</Kbd>
-            </Button>
-            <Button onClick={() => void quickUpdate()} disabled={!canMine || quickBusy} className="h-12 rounded-[14px] font-bold" title="Update last Anki card with this line">
-              {quickBusy ? 'Updating…' : 'Update last card'} <Kbd className="text-white/60">U</Kbd>
-            </Button>
-          </div>
+          <Button onClick={() => openMine()} disabled={!canMine} className="h-12 w-full rounded-[14px] font-bold" title="Open mining dialog">
+            Mine <Kbd className="text-white/60">M</Kbd>
+          </Button>
         </Card>
 
         <BuyMeACoffee />
