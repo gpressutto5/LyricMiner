@@ -290,7 +290,7 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
           <Shortcut k="A">auto-pause</Shortcut>
           <Shortcut k="R">repeat</Shortcut>
           <Shortcut k="M">mine</Shortcut>
-          <Shortcut k="U">update card</Shortcut>
+          <Shortcut k="U">update last card</Shortcut>
         </div>
       </Card>
 
