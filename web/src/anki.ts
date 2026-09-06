@@ -142,24 +142,65 @@ function buildFields(payload: CardPayload, s: Settings, existing: string[] | nul
   return { fields, audio, picture, skipped }
 }
 
-/** Like asbplayer's "update last card": enrich the most recently added note (e.g. one Yomitan just made). */
-export async function updateLastCard(payload: CardPayload, s: Settings) {
-  const ids = await invoke<number[]>('findNotes', { query: 'added:1' })
-  if (!ids.length) throw new Error('No notes were added today, so there is no card to update.')
-  const id = Math.max(...ids)
+/** How far back "update last card" reaches. Anything older is almost certainly not the card you just made. */
+export const UPDATE_WINDOW_MS = 10 * 60 * 1000
+
+/** Quote a value for an Anki search. Inside quotes Anki still treats \\, ", * and _ specially. */
+function quoteSearch(v: string) {
+  return `"${v.replace(/[\\"*_]/g, (c) => `\\${c}`)}"`
+}
+
+function firstFieldText(info: NoteInfo) {
+  const first = Object.values(info.fields).sort((a, b) => a.order - b.order)[0]?.value ?? ''
+  return first.replace(/<[^>]+>/g, '').trim().slice(0, 40)
+}
+
+export interface LastCard {
+  id: number
+  /** First field as plain text, so the user can tell which note is about to be overwritten. */
+  word: string
+  modelName: string
+  info: NoteInfo
+}
+
+/**
+ * The note "update last card" would overwrite: the newest one added to the configured deck within
+ * UPDATE_WINDOW_MS. Deck scoping and the time window keep an unrelated card made earlier today
+ * (which `added:1` alone would happily match) out of reach.
+ */
+export async function findLastCard(s: Settings): Promise<LastCard> {
+  const where = s.deck ? ` in ${s.deck}` : ''
+  const ids = await invoke<number[]>('findNotes', {
+    query: `added:1${s.deck ? ` deck:${quoteSearch(s.deck)}` : ''}`,
+  })
+  // Note ids are creation timestamps in ms, so recency costs no extra lookup.
+  const cutoff = Date.now() - UPDATE_WINDOW_MS
+  const recent = ids.filter((id) => id > cutoff)
+  if (!recent.length) {
+    const mins = Math.round(UPDATE_WINDOW_MS / 60000)
+    throw new Error(
+      ids.length
+        ? `The newest card${where} was added more than ${mins} minutes ago, so there is nothing recent to update. Make the card first, or use "Add new card".`
+        : `No card was added${where} in the last ${mins} minutes. Make the card first (e.g. in Yomitan), or use "Add new card".`,
+    )
+  }
+  const id = Math.max(...recent)
   const [info] = await invoke<NoteInfo[]>('notesInfo', { notes: [id] })
-  const existing = Object.keys(info.fields)
-  const { fields, audio, picture, skipped } = buildFields(payload, s, existing)
+  return { id, word: firstFieldText(info), modelName: info.modelName, info }
+}
+
+/** Like asbplayer's "update last card": enrich a note you just made (e.g. one Yomitan created). */
+export async function updateCard(target: LastCard, payload: CardPayload, s: Settings) {
+  const { fields, audio, picture, skipped } = buildFields(payload, s, Object.keys(target.info.fields))
   if (!Object.keys(fields).length && !audio.length && !picture.length) {
-    throw new Error(`Note type "${info.modelName}" has none of the configured fields (${skipped.join(', ')}).`)
+    throw new Error(`Note type "${target.modelName}" has none of the configured fields (${skipped.join(', ')}).`)
   }
   await invoke('updateNoteFields', {
-    note: { id, fields, ...(audio.length ? { audio } : {}), ...(picture.length ? { picture } : {}) },
+    note: { id: target.id, fields, ...(audio.length ? { audio } : {}), ...(picture.length ? { picture } : {}) },
   })
   const tags = allTags(payload, s)
-  if (tags.length) await invoke('addTags', { notes: [id], tags: tags.join(' ') })
-  const first = Object.values(info.fields).sort((a, b) => a.order - b.order)[0]?.value ?? ''
-  return { id, word: first.replace(/<[^>]+>/g, '').slice(0, 40), skipped }
+  if (tags.length) await invoke('addTags', { notes: [target.id], tags: tags.join(' ') })
+  return { id: target.id, word: target.word, skipped }
 }
 
 export async function addCard(payload: CardPayload, s: Settings) {

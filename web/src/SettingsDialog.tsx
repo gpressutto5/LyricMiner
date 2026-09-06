@@ -136,7 +136,7 @@ export function SettingsDialog({ open, onOpenChange, settings, onChange }: Props
           <p className="m-0 rounded-xl bg-coral-wash px-3.5 py-3 text-xs leading-relaxed font-medium text-ink-2/80">
             Per-song tag placeholders: <b className="text-ink-2">{'{artist} {title} {album} {channel}'}</b>. Values are squashed to PascalCase, so{' '}
             <b className="text-ink-2">Song::{'{artist}'}:{'{title}'}</b> gives something like <b className="text-ink-2">Song::Yorushika:TheHitchhikersGuide</b>. Leave it empty to skip.
-            “Update last card” writes into whichever of these fields exist on the newest note; missing fields are skipped.
+            “Update last card” writes into whichever of these fields exist on the newest note added to this deck in the last 10 minutes; missing fields are skipped.
           </p>
         </section>
 

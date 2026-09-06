@@ -3,7 +3,7 @@ import { Circle, ExternalLink, Pause, Play, RotateCcw, SkipBack, SkipForward, Sq
 import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
-import { updateLastCard } from './anki'
+import { findLastCard, updateCard } from './anki'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
@@ -161,12 +161,14 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     const line = lineFor()
     if (!line) return toast('No lyric line to mine yet.', 'bad')
     setQuickBusy(true)
-    toast('Updating last card…')
     try {
+      // Resolve the note first so the toast names what is being overwritten, not just "last card".
+      const target = await findLastCard(settings)
+      toast(`Updating ${target.word || 'last card'}…`)
       const start = Math.max(0, line.start - settings.padStart)
       const end = line.end + settings.padEnd
       const payload = await buildPayload(info, capture, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
-      const r = await updateLastCard(payload, settings)
+      const r = await updateCard(target, payload, settings)
       toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
     } catch (e) {
       toast((e as Error).message, 'bad')

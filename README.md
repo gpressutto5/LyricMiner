@@ -47,7 +47,7 @@ settings once.
    | `A` | Toggle auto-pause at the end of each line |
    | `R` | Toggle repeat of the current line |
    | `M` | Open the mining dialog for the current line |
-   | `U` | Update the last Anki card with this line's audio, image and sentence |
+   | `U` | Update the last Anki card with this line's audio, image and sentence (the newest note added to your deck in the last 10 minutes) |
 
 4. Press **Start capture** and allow sharing this tab (keep "Share tab audio" ticked). From now on every line
    you hear is recorded; the green bar under the seek slider shows what has been captured.

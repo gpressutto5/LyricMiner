@@ -3,7 +3,7 @@ import { Pause, Play, X } from 'lucide-react'
 import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
-import { addCard, buildSongTag, updateLastCard, type CardPayload } from './anki'
+import { addCard, buildSongTag, findLastCard, updateCard, type CardPayload } from './anki'
 import { blobToBase64 } from './api'
 import type { TabCapture } from './capture'
 import { Button } from '@/components/ui/button'
@@ -151,9 +151,11 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
     if (busy) return
     setBusy(mode)
     try {
+      // Resolve the target before the payload work so a miss fails fast, and so the toast can name the note.
+      const target = mode === 'update' ? await findLastCard(settings) : null
       const payload = await buildPayload(track, capture, text, start, end, imageTime, { audio: incAudio, image: incImage, sentence: incSentence }, settings)
-      if (mode === 'update') {
-        const r = await updateLastCard(payload, settings)
+      if (target) {
+        const r = await updateCard(target, payload, settings)
         toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
       } else {
         const r = await addCard(payload, settings)
