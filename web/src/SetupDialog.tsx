@@ -108,7 +108,7 @@ export function SetupDialog({ open, onOpenChange, onDone }: Props) {
             <p className="text-[13px] leading-relaxed font-medium text-ink-2">
               Songs play through YouTube, so the audio for your cards is recorded from this tab while you listen. When you press{' '}
               <b>Start capture</b> on a song, the browser asks which tab to share: pick <b>this tab</b> and keep <b>“Also share tab audio”</b>{' '}
-              ticked. The recording stays in your browser. Lines become mineable once you've heard them at normal speed.
+              ticked. The recording stays in your browser. Mine any line; parts you haven't heard yet are replayed once to record them.
             </p>
           ) : (
             <p className="text-[13px] leading-relaxed font-medium text-bad-text">

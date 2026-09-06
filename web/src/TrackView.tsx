@@ -127,9 +127,9 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     if (!transport || captureBusy) return
     setCaptureBusy(true)
     try {
-      const c = await TabCapture.start(transport, () => playerBox.current?.getBoundingClientRect() ?? null)
+      const c = await TabCapture.start(transport, () => playerBox.current?.getBoundingClientRect() ?? null, player.hold)
       setCapture(c)
-      toast('Capturing. Lines become mineable once you have heard them.', 'ok')
+      toast('Capturing. Mine any line; parts you have not heard yet are replayed to record them.', 'ok')
     } catch (e) {
       toast((e as Error).message, 'bad')
     } finally {
@@ -164,9 +164,9 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     try {
       // Resolve the note first so the toast names what is being overwritten, not just "last card".
       const target = await findLastCard(settings)
-      toast(`Updating ${target.word || 'last card'}…`)
       const start = Math.max(0, line.start - settings.padStart)
       const end = line.end + settings.padEnd
+      toast(capture.has(start, end) ? `Updating ${target.word || 'last card'}…` : `Replaying the line to record it, then updating ${target.word || 'last card'}…`)
       const payload = await buildPayload(info, capture, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
       const r = await updateCard(target, payload, settings)
       toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
@@ -310,7 +310,7 @@ function CaptureRow({ capture, busy, disabled, onStart, onStop }: { capture: Tab
         <span className={cn('relative inline-flex size-2.5 rounded-full', capture ? 'bg-ok' : 'bg-faint')} />
       </span>
       <span className={cn('min-w-0 flex-1 text-[13px] font-medium', capture ? 'text-ok-text' : 'text-muted')}>
-        {capture ? 'Recording this tab. Lines you have heard can be mined.' : 'Share this tab to record audio for mining.'}
+        {capture ? 'Recording this tab. Any line can be mined; unheard ones are replayed first.' : 'Share this tab to record audio for mining.'}
       </span>
       {capture ? (
         <button type="button" onClick={onStop} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-bold text-ink hover:bg-line-soft">

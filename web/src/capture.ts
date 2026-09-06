@@ -40,6 +40,10 @@ const MAX_GAIN = 4
  * (measured against ffmpeg cuts of the same video across several runs), so shift the window by that much.
  */
 const CAPTURE_LATENCY = 0.055
+/** Start the replay this far before the requested window so the first sample lands before it. */
+const REPLAY_LEAD = 0.6
+/** Extra wall-clock slack for the replay (seek, buffering) before giving up. */
+const REPLAY_SLACK_MS = 8000
 
 export function captureSupported(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && typeof MediaRecorder !== 'undefined'
@@ -64,12 +68,15 @@ export class TabCapture extends EventTarget {
   private grabbing = false
   private decoded: { size: number; buffer: AudioBuffer } | null = null
   private pendingData: (() => void)[] = []
+  private recording: Promise<void> | null = null
   stopped = false
 
   private constructor(
     stream: MediaStream,
     private transport: Transport,
     private getRect: () => DOMRect | null,
+    /** Suspend line-stepping behaviour (auto-pause, repeat) while a replay runs; returns the release function. */
+    private hold: () => () => void,
   ) {
     super()
     this.stream = stream
@@ -105,7 +112,7 @@ export class TabCapture extends EventTarget {
   }
 
   /** Ask the browser to share this tab (user gesture required) and start recording. */
-  static async start(transport: Transport, getRect: () => DOMRect | null): Promise<TabCapture> {
+  static async start(transport: Transport, getRect: () => DOMRect | null, hold: () => () => void = () => () => {}): Promise<TabCapture> {
     if (!captureSupported()) throw new Error('This browser cannot capture tab audio. Use Chrome or Edge.')
     let stream: MediaStream
     try {
@@ -123,7 +130,7 @@ export class TabCapture extends EventTarget {
       if (err.name === 'NotAllowedError') throw new Error('Tab sharing was cancelled.')
       throw new Error(`Could not start capture: ${err.message}`)
     }
-    return new TabCapture(stream, transport, getRect)
+    return new TabCapture(stream, transport, getRect, hold)
   }
 
   private tick() {
@@ -217,6 +224,55 @@ export class TabCapture extends EventTarget {
     return !!this.runFor(start, end)
   }
 
+  /**
+   * Make sure [start, end] is in the recording: when it is not, replay it once at normal speed
+   * (the user hears the line again), then put the playhead back where it was.
+   */
+  async ensure(start: number, end: number): Promise<void> {
+    if (this.has(start, end)) return
+    if (this.recording) {
+      await this.recording
+      if (this.has(start, end)) return
+    }
+    this.recording = this.replay(start, end).finally(() => {
+      this.recording = null
+    })
+    return this.recording
+  }
+
+  /** True while a replay-to-record is in progress. */
+  get isRecording() {
+    return !!this.recording
+  }
+
+  private async replay(start: number, end: number): Promise<void> {
+    if (this.stopped) throw new Error('Capture has stopped. Start it again to mine.')
+    const tr = this.transport
+    const resumeAt = tr.currentTime
+    const wasPlaying = !tr.paused
+    const prevRate = tr.rate
+    const release = this.hold()
+    this.dispatchEvent(new Event('recording'))
+    try {
+      if (prevRate !== 1) tr.setRate(1)
+      tr.seek(Math.max(0, start - REPLAY_LEAD))
+      tr.play()
+      const deadline = performance.now() + (end - start + REPLAY_LEAD) * 1000 + REPLAY_SLACK_MS
+      while (!this.has(start, end)) {
+        if (this.stopped) throw new Error('Capture stopped during the replay.')
+        if (performance.now() > deadline) throw new Error('Could not record this line: playback did not reach the end of it. Try again.')
+        await new Promise((r) => setTimeout(r, SAMPLE_MS))
+      }
+    } finally {
+      tr.pause()
+      if (prevRate !== 1) tr.setRate(prevRate)
+      tr.seek(resumeAt)
+      if (wasPlaying) tr.play()
+      release()
+      this.dispatchEvent(new Event('recorded'))
+    }
+  }
+
   /** Flush the recorder so the chunk list includes everything up to now. */
   private async flush(): Promise<void> {
     if (this.recorder.state !== 'recording') return
@@ -238,6 +294,7 @@ export class TabCapture extends EventTarget {
 
   /** Cut [start, end] (player seconds) out of the recording and encode it as MP3. */
   async clip(start: number, end: number): Promise<Blob> {
+    await this.ensure(start, end)
     const run = this.runFor(start, end)
     if (!run) throw new Error('This part of the song has not been captured yet. Play through it once at normal speed.')
     const buffer = await this.decodeAll()

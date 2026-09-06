@@ -49,6 +49,12 @@ export async function buildPayload(
   const songTag = buildSongTag(track, settings.songTagTemplate)
   if (songTag) payload.tags = [songTag]
   if (opts.sentence) payload.sentence = text
+  // Record anything missing up front (one replay covers audio and image) so the cuts below never fail on coverage.
+  if (opts.audio || (opts.image && !capture.frameAt(imageTime))) {
+    const lo = opts.image ? Math.min(start, imageTime - 0.3) : start
+    const hi = opts.image ? Math.max(end, imageTime + 0.3) : end
+    await capture.ensure(Math.max(0, lo), hi)
+  }
   const jobs: Promise<void>[] = []
   if (opts.audio) {
     jobs.push(
@@ -62,7 +68,7 @@ export async function buildPayload(
   }
   if (opts.image) {
     const frame = capture.frameAt(imageTime)
-    if (!frame) throw new Error('No captured frame near that moment. Play through this line once, or turn the image off.')
+    if (!frame) throw new Error('No captured frame near that moment. Try again, or turn the image off.')
     jobs.push(
       blobToBase64(frame).then((data) => {
         payload.image = { data, filename: `lyricminer_${track.id}_${ms(imageTime)}.jpg` }
@@ -84,6 +90,18 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
   const [busy, setBusy] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [recording, setRecording] = useState(capture.isRecording)
+  // Coverage changes after a replay; re-render so "replays to record" flips to the clip length.
+  useEffect(() => {
+    const on = () => setRecording(true)
+    const off = () => setRecording(false)
+    capture.addEventListener('recording', on)
+    capture.addEventListener('recorded', off)
+    return () => {
+      capture.removeEventListener('recording', on)
+      capture.removeEventListener('recorded', off)
+    }
+  }, [capture])
   const audioRef = useRef<HTMLAudioElement>(null)
   const previewUrl = useRef<string | null>(null)
 
@@ -106,7 +124,8 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
   }, [start, end])
 
   const captured = capture.has(start, end)
-  const frame = useMemo(() => capture.frameAt(imageTime), [capture, imageTime])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const frame = useMemo(() => capture.frameAt(imageTime), [capture, imageTime, recording])
   // Object URL lifecycle lives entirely inside the effect so StrictMode's double-invoke can't revoke a live URL.
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   useEffect(() => {
@@ -217,7 +236,9 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
             <IncludeRow checked={incAudio} onChange={setIncAudio} label="Audio" field={settings.audioField} />
             <div className="flex justify-between text-xs font-bold text-muted tabular-nums">
               <span>{formatTimeMs(start)}</span>
-              <span className={captured ? 'text-coral-text' : 'text-bad-text'}>{captured ? `${(end - start).toFixed(2)} s` : 'not captured yet'}</span>
+              <span className={captured ? 'text-coral-text' : 'text-muted'}>
+                {recording ? 'recording…' : captured ? `${(end - start).toFixed(2)} s` : `${(end - start).toFixed(2)} s · replays to record`}
+              </span>
               <span>{formatTimeMs(end)}</span>
             </div>
             <div className="flex flex-col gap-2">
@@ -228,11 +249,11 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
               <button
                 type="button"
                 onClick={() => void togglePreview()}
-                disabled={!captured || previewBusy}
+                disabled={previewBusy || recording}
                 className="flex h-9 items-center gap-2 rounded-full bg-ink pr-3.5 pl-2.5 text-[13px] font-bold text-white hover:bg-ink-2 disabled:opacity-40"
               >
                 {previewing ? <Pause className="size-3" fill="currentColor" /> : <Play className="size-3" fill="currentColor" />}
-                {previewBusy ? 'Cutting…' : previewing ? 'Stop' : 'Preview clip'}
+                {previewBusy ? (captured ? 'Cutting…' : 'Recording…') : previewing ? 'Stop' : 'Preview clip'}
               </button>
               <audio ref={audioRef} preload="none" onPlay={() => setPreviewing(true)} onPause={() => setPreviewing(false)} onEnded={() => setPreviewing(false)} />
               <button
@@ -255,7 +276,7 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
               <img className="aspect-video w-full rounded-xl bg-black object-contain" src={frameUrl} alt="" />
             ) : (
               <div className="flex aspect-video w-full items-center justify-center rounded-xl bg-ink px-4 text-center text-xs font-semibold text-white/70">
-                No frame captured near this moment yet
+                No frame yet · captured when the line is recorded
               </div>
             )}
             <div className="flex items-center gap-2">
@@ -284,10 +305,10 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
           </span>
           <div className="flex shrink-0 gap-2.5">
             <Button variant="outline" disabled={!!busy || !canAdd} onClick={() => run('add')} className="h-11 rounded-[14px] border-[1.5px] px-[18px] font-bold shadow-none">
-              {busy === 'add' ? 'Adding…' : 'Add new card'}
+              {busy === 'add' ? (recording ? 'Recording…' : 'Adding…') : 'Add new card'}
             </Button>
             <Button disabled={!!busy} onClick={() => run('update')} className="h-11 rounded-[14px] px-[18px] font-bold">
-              {busy === 'update' ? 'Updating…' : 'Update last card'} <Kbd className="text-white/60">↵</Kbd>
+              {busy === 'update' ? (recording ? 'Recording…' : 'Updating…') : 'Update last card'} <Kbd className="text-white/60">↵</Kbd>
             </Button>
           </div>
         </div>

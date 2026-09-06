@@ -50,7 +50,8 @@ settings once.
    | `U` | Update the last Anki card with this line's audio, image and sentence (the newest note added to your deck in the last 10 minutes) |
 
 4. Press **Start capture** and allow sharing this tab (keep "Share tab audio" ticked). From now on every line
-   you hear is recorded; the green bar under the seek slider shows what has been captured.
+   you hear is recorded; the green bar under the seek slider shows what has been captured. Mining a line you have
+   not heard yet replays it once at normal speed to record it, then puts the playhead back.
 5. Mine: look a word up with Yomitan and add it to Anki as usual. Then press `U` and
    LyricMiner writes the line's trimmed audio, a video frame and the sentence into that note.
    Press `M` to open **Mine** and fine-tune the audio start/end, pick a different frame, or edit the sentence before sending.
@@ -66,7 +67,8 @@ the current tab (`getDisplayMedia`). The audio track is recorded continuously wi
 timeline maps player time to recording time for every uninterrupted stretch of playback at 1×. Every half second
 a frame of the player area is grabbed from the shared video track. When you mine a line, the matching slice is cut
 with Web Audio, peak-normalised, encoded to MP3 in the browser, and sent to AnkiConnect together with the nearest
-frame. Lines you have not heard yet (or only heard at another speed) cannot be mined until you play them.
+frame. If the line has not been heard yet (or only at another speed), LyricMiner first seeks just before it, plays it
+through once at 1× with auto-pause and repeat suspended, restores the playhead, and then cuts the clip.
 
 Measured against ffmpeg cuts of the downloaded file, captured clips line up within about 50 ms.
 

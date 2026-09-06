@@ -51,6 +51,8 @@ export function usePlayer({ transport, lines, offset, keyboardEnabled, onMine, o
   /** Line index we auto-paused at the end of, so the next play() advances instead of re-pausing. */
   const pausedAtEndRef = useRef(-1)
   const activeRef = useRef(-1)
+  /** >0 while a caller (the capture replay) has asked us not to auto-pause / repeat. */
+  const holdRef = useRef(0)
 
   /** Last line whose start <= t, or -1. */
   const indexAt = useCallback((t: number) => {
@@ -105,7 +107,7 @@ export function usePlayer({ transport, lines, offset, keyboardEnabled, onMine, o
           setActiveIndex(active)
         }
 
-        if (!v.paused && n > 0) {
+        if (!v.paused && n > 0 && holdRef.current === 0) {
           const a = armedRef.current
           if (a < 0) {
             if (c >= 0) armedRef.current = c
@@ -163,6 +165,19 @@ export function usePlayer({ transport, lines, offset, keyboardEnabled, onMine, o
   const prevLine = useCallback(() => playLine(Math.max(0, currentNav() - 1)), [playLine, currentNav])
   const nextLine = useCallback(() => playLine(currentNav() + 1), [playLine, currentNav])
   const repeatLine = useCallback(() => playLine(Math.max(0, currentNav())), [playLine, currentNav])
+
+  /** Suspend auto-pause / repeat (e.g. while the capture replays a line). Returns the release function, which re-arms at the playhead. */
+  const hold = useCallback(() => {
+    holdRef.current++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      holdRef.current--
+      const v = videoRef.current
+      if (v && holdRef.current === 0) arm(v.currentTime)
+    }
+  }, [arm])
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current
@@ -274,6 +289,7 @@ export function usePlayer({ transport, lines, offset, keyboardEnabled, onMine, o
     repeatLine,
     togglePlay,
     currentNav,
+    hold,
   }
 }
 
