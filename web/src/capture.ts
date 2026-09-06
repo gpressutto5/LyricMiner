@@ -26,6 +26,8 @@ export interface Coverage {
 interface Frame {
   t: number
   blob: Blob
+  /** Grabbed while the embed was flashing its play/pause glyph over the video (see CHROME_MS). */
+  dirty: boolean
 }
 
 const SAMPLE_MS = 100
@@ -35,6 +37,12 @@ const MAX_FRAMES = 1500
 const FRAME_WIDTH = 640
 const PEAK_TARGET = 0.95
 const MAX_GAIN = 4
+/**
+ * How long YouTube paints its own chrome — the big play/pause glyph in the middle of the video, which no
+ * amount of cropping can hide — after a seek or a play/pause. Frames grabbed inside that window are kept
+ * (they may be all we have) but only used when nothing cleaner is close enough.
+ */
+const CHROME_MS = 1500
 /**
  * Recorded audio consistently lands ~55 ms later in the recording than the player-time mapping predicts
  * (measured against ffmpeg cuts of the same video across several runs), so shift the window by that much.
@@ -65,6 +73,8 @@ export class TabCapture extends EventTarget {
   private canvas = document.createElement('canvas')
   private timer = 0
   private lastFrameAt = 0
+  /** performance.now() until which grabbed frames are assumed to have the embed's glyph on them. */
+  private chromeUntil = 0
   private grabbing = false
   private decoded: { size: number; buffer: AudioBuffer } | null = null
   private pendingData: (() => void)[] = []
@@ -137,7 +147,11 @@ export class TabCapture extends EventTarget {
     if (this.stopped) return
     const tr = this.transport
     const now = performance.now()
-    if (tr.paused) return
+    if (tr.paused) {
+      // Pausing paints the glyph, and it lingers into the first frames after playback resumes.
+      this.chromeUntil = now + CHROME_MS
+      return
+    }
     const t = tr.currentTime
     const rate = tr.rate
     const last = this.runs[this.runs.length - 1]
@@ -153,6 +167,8 @@ export class TabCapture extends EventTarget {
         return
       }
     }
+    // A fresh run means the playhead jumped (a seek) or the rate changed — both flash the glyph.
+    this.chromeUntil = now + CHROME_MS
     this.runs.push({ wall0: now, t0: t, wall1: now, t1: t, rate, bias: 0, n: 1 })
     this.maybeGrabFrame(t, now)
   }
@@ -163,6 +179,7 @@ export class TabCapture extends EventTarget {
     const v = this.video
     if (!rect || !v.videoWidth || rect.width < 10) return
     this.lastFrameAt = now
+    const dirty = now < this.chromeUntil
     // The captured surface is the tab's viewport; map CSS pixels to captured pixels. Inset a little so the
     // player's rounded corners / card border don't end up in the card image.
     const sx = v.videoWidth / window.innerWidth
@@ -184,7 +201,7 @@ export class TabCapture extends EventTarget {
       (blob) => {
         this.grabbing = false
         if (!blob) return
-        this.frames.push({ t, blob })
+        this.frames.push({ t, blob, dirty })
         if (this.frames.length > MAX_FRAMES) this.frames.splice(0, this.frames.length - MAX_FRAMES)
       },
       'image/jpeg',
@@ -320,13 +337,20 @@ export class TabCapture extends EventTarget {
     return encodeMp3(mono, sr)
   }
 
-  /** Nearest captured frame to t, or null when none is within a second. */
+  /**
+   * Nearest captured frame to t, or null when none is within a second. Frames caught under the embed's
+   * play/pause glyph lose to any clean frame in range, and are only returned when nothing else is close.
+   */
   frameAt(t: number): Blob | null {
     let best: Frame | null = null
+    let bestDirty: Frame | null = null
     for (const f of this.frames) {
-      if (!best || Math.abs(f.t - t) < Math.abs(best.t - t)) best = f
+      if (Math.abs(f.t - t) > 1) continue
+      if (f.dirty) {
+        if (!bestDirty || Math.abs(f.t - t) < Math.abs(bestDirty.t - t)) bestDirty = f
+      } else if (!best || Math.abs(f.t - t) < Math.abs(best.t - t)) best = f
     }
-    return best && Math.abs(best.t - t) <= 1 ? best.blob : null
+    return (best ?? bestDirty)?.blob ?? null
   }
 
   get frameCount() {

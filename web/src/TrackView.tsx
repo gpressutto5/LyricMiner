@@ -187,7 +187,14 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
       <div className="flex min-h-0 flex-col items-center gap-2 overflow-y-auto overflow-x-hidden px-0.5 pb-0.5">
         <Card className="flex w-full flex-col gap-4 p-4">
           <div ref={playerBox} className="relative aspect-video overflow-hidden rounded-[14px] bg-black">
-            <div ref={playerHost} className="absolute inset-0 [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full" />
+            {/* The embed paints its own chrome (title bar, "More videos", branding) over the video after every seek,
+                and CSS can't reach inside a cross-origin iframe. So make the iframe twice as tall as the box: YouTube
+                letterboxes the 16:9 video into the middle band — exactly the box — and draws its chrome against the
+                iframe's own edges, up in the black bars we crop away. The video itself is not scaled or cropped. */}
+            <div
+              ref={playerHost}
+              className="absolute inset-0 overflow-hidden [&_iframe]:absolute [&_iframe]:top-1/2 [&_iframe]:left-1/2 [&_iframe]:block [&_iframe]:h-[200%] [&_iframe]:w-[100%] [&_iframe]:-translate-x-1/2 [&_iframe]:-translate-y-1/2"
+            />
             {/* Keeps clicks (and keyboard focus) out of the iframe; click toggles playback like a <video>. */}
             {ready && !playerError && <button type="button" aria-label="Play / pause" onClick={player.togglePlay} className="absolute inset-0 cursor-pointer" />}
             {!ready && !playerError && (
