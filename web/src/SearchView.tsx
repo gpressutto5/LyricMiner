@@ -4,7 +4,7 @@ import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { SearchRequest } from './App'
 import { bookmarkletHref, youtubeSearchUrl } from './api'
-import { Card, Key, SectionLabel } from './components/primitives'
+import { BuyMeACoffee, Card, Key, SectionLabel } from './components/primitives'
 import { forgetTrack, loadLibrary } from './library'
 import { formatTime } from './lrc'
 
@@ -118,6 +118,8 @@ export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
             </Card>
           </>
         )}
+
+        <BuyMeACoffee className="mx-auto" />
       </div>
     </div>
   )

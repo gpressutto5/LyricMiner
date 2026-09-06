@@ -80,6 +80,12 @@ Limitations: the recording lives in memory for the current page; some label-owne
 - `download-server` branch — the earlier version with a Node server that downloads media with yt-dlp and clips it with
   ffmpeg; kept for reference
 
+## Support
+
+If LyricMiner is useful to you:
+
+<a href="https://www.buymeacoffee.com/gpressutto5"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=gpressutto5&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" height="40" alt="Buy me a coffee" /></a>
+
 ---
 
 <sub>The mining workflow — line-by-line stepping, "update last card", audio and screenshot capture — takes its cues

@@ -130,3 +130,33 @@ export function StatusChip({ ok, children, className }: { ok: boolean | null; ch
     </span>
   )
 }
+
+/** Quiet support link: Buy Me a Coffee's cup and wording, without the loud yellow button. */
+export function BuyMeACoffee({ className }: { className?: string }) {
+  return (
+    <a
+      href="https://www.buymeacoffee.com/gpressutto5"
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(
+        'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-semibold text-faint transition-colors hover:bg-soft hover:text-ink-2',
+        className,
+      )}
+    >
+      <CoffeeCup className="size-4 text-[#B59700]" />
+      Buy me a coffee
+    </a>
+  )
+}
+
+/** Buy Me a Coffee's cup mark. */
+function CoffeeCup({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4.2 7.2h11.6l-1 9.1a2.4 2.4 0 0 1-2.4 2.1H7.6a2.4 2.4 0 0 1-2.4-2.1z" />
+      <path d="M16 9.4h1.4a2.5 2.5 0 0 1 0 5h-.9" />
+      <path d="M5.4 21h9.6" />
+      <path d="M9 4.6c.7-.7.7-1.4 0-2.1M12.6 4.6c.7-.7.7-1.4 0-2.1" />
+    </svg>
+  )
+}

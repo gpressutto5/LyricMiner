@@ -7,7 +7,7 @@ import { updateLastCard } from './anki'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
-import { Card, Kbd, Pill, RoundButton } from './components/primitives'
+import { BuyMeACoffee, Card, Kbd, Pill, RoundButton } from './components/primitives'
 import { captureSupported, TabCapture, type Coverage } from './capture'
 import { formatTime, parseLrc } from './lrc'
 import { rememberTrack } from './library'
@@ -182,80 +182,84 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] gap-5 px-7 pt-2 pb-7 max-[900px]:grid-cols-1 max-[900px]:grid-rows-[auto_minmax(0,1fr)]">
       {/* Player */}
-      <Card className="flex flex-col gap-4 self-start p-4">
-        <div ref={playerBox} className="relative aspect-video overflow-hidden rounded-[14px] bg-black">
-          <div ref={playerHost} className="absolute inset-0 [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full" />
-          {/* Keeps clicks (and keyboard focus) out of the iframe; click toggles playback like a <video>. */}
-          {ready && !playerError && <button type="button" aria-label="Play / pause" onClick={player.togglePlay} className="absolute inset-0 cursor-pointer" />}
-          {!ready && !playerError && (
-            <div className="absolute inset-0 flex items-center justify-center bg-ink text-[13px] font-semibold text-white/70">Loading player…</div>
-          )}
-          {playerError && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-ink px-5 text-center text-[13px] font-semibold text-white/70">
-              <div className="font-bold text-white">Can't play here</div>
-              <div className="text-xs font-medium">{playerError}</div>
-              <a href={`https://www.youtube.com/watch?v=${id}`} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">
-                Open on YouTube <ExternalLink className="size-3" />
-              </a>
-            </div>
-          )}
-        </div>
+      <div className="flex min-h-0 flex-col items-center gap-2 overflow-y-auto overflow-x-hidden px-0.5 pb-0.5">
+        <Card className="flex w-full flex-col gap-4 p-4">
+          <div ref={playerBox} className="relative aspect-video overflow-hidden rounded-[14px] bg-black">
+            <div ref={playerHost} className="absolute inset-0 [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full" />
+            {/* Keeps clicks (and keyboard focus) out of the iframe; click toggles playback like a <video>. */}
+            {ready && !playerError && <button type="button" aria-label="Play / pause" onClick={player.togglePlay} className="absolute inset-0 cursor-pointer" />}
+            {!ready && !playerError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-ink text-[13px] font-semibold text-white/70">Loading player…</div>
+            )}
+            {playerError && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-ink px-5 text-center text-[13px] font-semibold text-white/70">
+                <div className="font-bold text-white">Can't play here</div>
+                <div className="text-xs font-medium">{playerError}</div>
+                <a href={`https://www.youtube.com/watch?v=${id}`} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">
+                  Open on YouTube <ExternalLink className="size-3" />
+                </a>
+              </div>
+            )}
+          </div>
 
-        <div className="flex flex-col gap-1">
-          <div className="font-jp text-[17px] leading-[1.3] font-bold">{info?.title ?? '…'}</div>
-          <div className="text-[13px] font-medium text-muted">{info?.channel}</div>
-        </div>
+          <div className="flex flex-col gap-1">
+            <div className="font-jp text-[17px] leading-[1.3] font-bold">{info?.title ?? '…'}</div>
+            <div className="text-[13px] font-medium text-muted">{info?.channel}</div>
+          </div>
 
-        <SeekBar player={player} duration={duration} disabled={!ready} capture={capture} />
+          <SeekBar player={player} duration={duration} disabled={!ready} capture={capture} />
 
-        <div className="flex items-center justify-center gap-3">
-          <RoundButton label="Previous line (←)" onClick={player.prevLine} disabled={!ready}>
-            <SkipBack fill="currentColor" />
-          </RoundButton>
-          <RoundButton label={player.playing ? 'Pause (space)' : 'Play (space)'} size="lg" tone="accent" onClick={player.togglePlay} disabled={!ready}>
-            {player.playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" className="translate-x-px" />}
-          </RoundButton>
-          <RoundButton label="Next line (→)" onClick={player.nextLine} disabled={!ready}>
-            <SkipForward fill="currentColor" />
-          </RoundButton>
-          <RoundButton label="Replay current line (↑)" onClick={player.repeatLine} disabled={!ready}>
-            <RotateCcw strokeWidth={2.2} />
-          </RoundButton>
-        </div>
+          <div className="flex items-center justify-center gap-3">
+            <RoundButton label="Previous line (←)" onClick={player.prevLine} disabled={!ready}>
+              <SkipBack fill="currentColor" />
+            </RoundButton>
+            <RoundButton label={player.playing ? 'Pause (space)' : 'Play (space)'} size="lg" tone="accent" onClick={player.togglePlay} disabled={!ready}>
+              {player.playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" className="translate-x-px" />}
+            </RoundButton>
+            <RoundButton label="Next line (→)" onClick={player.nextLine} disabled={!ready}>
+              <SkipForward fill="currentColor" />
+            </RoundButton>
+            <RoundButton label="Replay current line (↑)" onClick={player.repeatLine} disabled={!ready}>
+              <RotateCcw strokeWidth={2.2} />
+            </RoundButton>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <Pill on={player.autoPause} kbd="A" onClick={() => player.setAutoPause((x) => !x)} title="Pause at the end of every line">
-            Auto-pause
-          </Pill>
-          <Pill on={player.repeat} kbd="R" onClick={() => player.setRepeat((x) => !x)} title="Loop the current line">
-            Repeat
-          </Pill>
-          <div className="flex-1" />
-          <Select value={String(player.rate)} onValueChange={(v) => player.setRate(Number(v))}>
-            <SelectTrigger aria-label="Playback speed" className="h-9 w-auto gap-1.5 rounded-full border-0 bg-soft px-3 text-[13px] font-bold text-ink-2 shadow-none data-[size=default]:h-9 [&_svg]:text-ink-2">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end" className="rounded-xl">
-              {RATES.map((r) => (
-                <SelectItem key={r} value={String(r)} className="rounded-lg font-semibold">
-                  {r}×
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+          <div className="flex items-center gap-2">
+            <Pill on={player.autoPause} kbd="A" onClick={() => player.setAutoPause((x) => !x)} title="Pause at the end of every line">
+              Auto-pause
+            </Pill>
+            <Pill on={player.repeat} kbd="R" onClick={() => player.setRepeat((x) => !x)} title="Loop the current line">
+              Repeat
+            </Pill>
+            <div className="flex-1" />
+            <Select value={String(player.rate)} onValueChange={(v) => player.setRate(Number(v))}>
+              <SelectTrigger aria-label="Playback speed" className="h-9 w-auto gap-1.5 rounded-full border-0 bg-soft px-3 text-[13px] font-bold text-ink-2 shadow-none data-[size=default]:h-9 [&_svg]:text-ink-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end" className="rounded-xl">
+                {RATES.map((r) => (
+                  <SelectItem key={r} value={String(r)} className="rounded-lg font-semibold">
+                    {r}×
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} />
+          <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} />
 
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2.5">
-          <Button variant="outline" onClick={() => openMine()} disabled={!canMine} className="h-12 rounded-[14px] border-[1.5px] font-bold shadow-none" title="Open mining dialog">
-            Mine… <Kbd>M</Kbd>
-          </Button>
-          <Button onClick={() => void quickUpdate()} disabled={!canMine || quickBusy} className="h-12 rounded-[14px] font-bold" title="Update last Anki card with this line">
-            {quickBusy ? 'Updating…' : 'Update last card'} <Kbd className="text-white/60">U</Kbd>
-          </Button>
-        </div>
-      </Card>
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-2.5">
+            <Button variant="outline" onClick={() => openMine()} disabled={!canMine} className="h-12 rounded-[14px] border-[1.5px] font-bold shadow-none" title="Open mining dialog">
+              Mine… <Kbd>M</Kbd>
+            </Button>
+            <Button onClick={() => void quickUpdate()} disabled={!canMine || quickBusy} className="h-12 rounded-[14px] font-bold" title="Update last Anki card with this line">
+              {quickBusy ? 'Updating…' : 'Update last card'} <Kbd className="text-white/60">U</Kbd>
+            </Button>
+          </div>
+        </Card>
+
+        <BuyMeACoffee />
+      </div>
 
       {/* Lyrics */}
       <Card className="flex min-h-0 flex-col overflow-hidden">
