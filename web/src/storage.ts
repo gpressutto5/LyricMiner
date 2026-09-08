@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   padEnd: 0,
   fontSize: 28,
   autoDetect: false,
-  autoDetectAction: 'dialog',
+  autoDetectAction: 'update',
 }
 
 const SETTINGS_KEY = 'lyricminer.settings'

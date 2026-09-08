@@ -47,9 +47,9 @@ recorded from the tab while you listen.
    **Add new card** creates a standalone note in the deck / note type chosen in Settings.
 6. Optional, one-click mining: turn on **Detect new Anki cards** in Settings. While capture is on, LyricMiner
    polls Anki once a second for cards added to your deck, matches each card's sentence to a lyric line, and
-   either opens the mining dialog on that line with the card preselected or, if you choose **Update it
-   automatically**, fills the card in straight away (a toast offers **Adjust** if the match looks wrong). This is
-   the same polling approach GameSentenceMiner uses; cards made while the tab is hidden or idle are ignored.
+   fills the card in straight away (a toast offers **Adjust** if the match looks wrong). Choose **Open the mining
+   dialog** instead to review each match first, with the card preselected. This is the same polling approach
+   GameSentenceMiner uses; cards made while the tab is hidden or idle are ignored.
 
 Configure field names, deck and note type under **Settings**. Fields that don't exist on the target note type are
 skipped.
