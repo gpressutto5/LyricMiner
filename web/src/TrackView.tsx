@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Circle, ExternalLink, Pause, Play, RotateCcw, SkipBack, SkipForward, Square } from 'lucide-react'
 import { cn } from 'cn'
+import { toast as sonner } from 'sonner'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
-import { findLastCard, updateCard } from './anki'
+import { findLastCard, noteSentence, toLastCard, updateCard, type LastCard, type NoteInfo } from './anki'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { BuyMeACoffee, Card, Kbd, Pill, RoundButton } from './components/primitives'
 import { captureSupported, TabCapture, type Coverage } from './capture'
-import { formatTime, parseLrc } from './lrc'
+import { formatTime, parseLrc, type LyricLine } from './lrc'
 import { rememberTrack } from './library'
 import { LyricsList } from './LyricsList'
 import { LyricsSource } from './LyricsSource'
-import { buildPayload, MineDialog, type MineTarget } from './MineDialog'
+import { buildPayload, MineDialog, usedThumbnail, type MineTarget } from './MineDialog'
+import { matchLine, useNewCardDetector, type DetectorStatus } from './newCards'
 import { loadLyrics, saveLyrics, type SavedLyrics, type Settings } from './storage'
 import { usePlayer, usePlayerTime, type Player } from './usePlayer'
 import { fetchOEmbed, YouTubeTransport } from './youtube'
@@ -40,6 +42,10 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
   const [saved, setSaved] = useState<SavedLyrics | null>(() => loadLyrics(id))
   const [mineTarget, setMineTarget] = useState<MineTarget | null>(null)
   const [quickBusy, setQuickBusy] = useState(false)
+  const [detect, setDetect] = useState<DetectorStatus>('idle')
+  // Detected cards waiting for the dialog while another one is open, and a chain serialising automatic updates.
+  const pendingTargets = useRef<MineTarget[]>([])
+  const autoQueue = useRef(Promise.resolve())
   const playerHost = useRef<HTMLDivElement>(null)
   const playerBox = useRef<HTMLDivElement>(null)
 
@@ -143,17 +149,45 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     return player.shifted[Math.max(0, idx)]
   }
 
+  const showMine = (target: MineTarget) => {
+    transport?.pause()
+    setMineTarget(target)
+  }
   const openMine = (i?: number) => {
     if (!capture) return toast('Start capture first so the audio can be clipped.', 'bad')
     const line = lineFor(i)
     if (!line) return toast('No lyric line to mine yet.', 'bad')
-    transport?.pause()
-    setMineTarget({ text: line.text, start: line.start, end: line.end })
+    showMine({ text: line.text, start: line.start, end: line.end })
+  }
+  const mineTargetRef = useRef(mineTarget)
+  mineTargetRef.current = mineTarget
+  /** Show a detected card now, or after the dialog that is already open is dealt with. */
+  const queueMine = (target: MineTarget) => {
+    if (mineTargetRef.current) pendingTargets.current.push(target)
+    else showMine(target)
+  }
+  const closeMine = () => {
+    const next = pendingTargets.current.shift() ?? null
+    mineTargetRef.current = next
+    setMineTarget(next)
   }
   // Stable identity for the memoized lyrics list; the ref always points at the latest closure.
   const openMineRef = useRef(openMine)
   openMineRef.current = openMine
   const onMineLine = useCallback((i: number) => openMineRef.current(i), [])
+
+  /** Write a line's audio, frame and text into `target`, replaying the line first if it was never heard. */
+  const enrich = async (target: LastCard, line: LyricLine, what: string) => {
+    if (!info || !capture) throw new Error('Start capture first so the audio can be clipped.')
+    const start = Math.max(0, line.start - settings.padStart)
+    const end = line.end + settings.padEnd
+    toast(capture.has(start, end) ? `Updating ${target.word || what}…` : `Replaying the line to record it, then updating ${target.word || what}…`)
+    const payload = await buildPayload(info, capture, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
+    const r = await updateCard(target, payload, settings)
+    return { ...r, thumbnail: usedThumbnail(payload) }
+  }
+  const skippedNote = (r: { skipped: string[]; thumbnail: boolean }) =>
+    `${r.thumbnail ? '. Image is the video thumbnail (no clean frame of that moment yet)' : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`
 
   const quickUpdate = async () => {
     if (!info || quickBusy) return
@@ -164,18 +198,51 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     try {
       // Resolve the note first so the toast names what is being overwritten, not just "last card".
       const target = await findLastCard(settings)
-      const start = Math.max(0, line.start - settings.padStart)
-      const end = line.end + settings.padEnd
-      toast(capture.has(start, end) ? `Updating ${target.word || 'last card'}…` : `Replaying the line to record it, then updating ${target.word || 'last card'}…`)
-      const payload = await buildPayload(info, capture, line.text, start, end, (line.start + line.end) / 2, { audio: true, image: true, sentence: true }, settings)
-      const r = await updateCard(target, payload, settings)
-      toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
+      const r = await enrich(target, line, 'last card')
+      toast(`Updated last card${r.word ? ` (${r.word})` : ''}${skippedNote(r)}`, 'ok')
     } catch (e) {
       toast((e as Error).message, 'bad')
     } finally {
       setQuickBusy(false)
     }
   }
+
+  /**
+   * A card just appeared in the mining deck (Yomitan, most likely). Find the lyric line its sentence came
+   * from, then either enrich it straight away or open the dialog on that line with the card preselected.
+   */
+  const onNewCard = (note: NoteInfo) => {
+    if (!info || !capture) return
+    const card = toLastCard(note)
+    const idx = matchLine(noteSentence(note, settings), player.shifted, player.currentNav())
+    const line = idx >= 0 ? player.shifted[idx] : lineFor()
+    if (!line) return
+    const target: MineTarget = { text: line.text, start: line.start, end: line.end, note: card }
+    if (idx < 0) {
+      // Unknown sentence: never write blindly. Show the dialog on the current line so the user decides.
+      toast(`New card${card.word ? ` (${card.word})` : ''} doesn't match a lyric line; check the line before updating.`)
+      return queueMine(target)
+    }
+    if (settings.autoDetectAction !== 'update') return queueMine(target)
+    autoQueue.current = autoQueue.current.then(async () => {
+      try {
+        const r = await enrich(card, line, 'new card')
+        sonner.success(`Updated ${r.word || 'new card'} with “${line.text}”${skippedNote(r)}`, {
+          action: { label: 'Adjust', onClick: () => queueMine(target) },
+        })
+      } catch (e) {
+        toast((e as Error).message, 'bad')
+      }
+    })
+  }
+
+  useNewCardDetector({
+    enabled: settings.autoDetect && !!capture && !!info && lines.length > 0,
+    settings,
+    playing: player.playing,
+    onNote: onNewCard,
+    onStatus: setDetect,
+  })
 
   const duration = player.duration || info?.duration || 0
   const canMine = ready && !!capture && lines.length > 0
@@ -255,7 +322,7 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
             </Select>
           </div>
 
-          <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} />
+          <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} watching={settings.autoDetect ? detect : null} deck={settings.deck} />
 
           <Button onClick={() => openMine()} disabled={!canMine} className="h-12 w-full rounded-[14px] font-bold" title="Open mining dialog">
             Mine <Kbd className="text-white/60">M</Kbd>
@@ -271,6 +338,8 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
           info={info}
           saved={saved}
           onChange={changeLyrics}
+          firstLineStart={lines[0]?.start}
+          playhead={() => transport?.currentTime ?? null}
           trailing={
             <div className="flex gap-1.5">
               <button type="button" aria-label="Smaller lyrics" title="Smaller lyrics" onClick={() => setFontSize(-2)} disabled={settings.fontSize <= FONT_MIN} className="flex size-8 items-center justify-center rounded-full bg-soft text-xs font-extrabold text-muted hover:bg-line-soft disabled:opacity-40">
@@ -295,14 +364,31 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
       </Card>
 
       {mineTarget && info && capture && (
-        <MineDialog track={info} capture={capture} target={mineTarget} settings={settings} onClose={() => setMineTarget(null)} toast={toast} />
+        <MineDialog key={mineTarget.note?.id ?? 'manual'} track={info} capture={capture} target={mineTarget} settings={settings} onClose={closeMine} toast={toast} />
       )}
     </div>
   )
 }
 
 /** Start / stop tab capture, with a hint about what it unlocks. */
-function CaptureRow({ capture, busy, disabled, onStart, onStop }: { capture: TabCapture | null; busy: boolean; disabled: boolean; onStart: () => void; onStop: () => void }) {
+function CaptureRow({
+  capture,
+  busy,
+  disabled,
+  onStart,
+  onStop,
+  watching,
+  deck,
+}: {
+  capture: TabCapture | null
+  busy: boolean
+  disabled: boolean
+  onStart: () => void
+  onStop: () => void
+  /** New-card detection state, or null when the option is off. */
+  watching: DetectorStatus | null
+  deck: string
+}) {
   if (!captureSupported()) {
     return (
       <div className="rounded-[14px] bg-bad-tint px-4 py-3 text-[13px] font-medium text-bad-text">
@@ -317,7 +403,15 @@ function CaptureRow({ capture, busy, disabled, onStart, onStop }: { capture: Tab
         <span className={cn('relative inline-flex size-2.5 rounded-full', capture ? 'bg-ok' : 'bg-faint')} />
       </span>
       <span className={cn('min-w-0 flex-1 text-[13px] font-medium', capture ? 'text-ok-text' : 'text-muted')}>
-        {capture ? 'Recording this tab. Any line can be mined; unheard ones are replayed first.' : 'Share this tab to record audio for mining.'}
+        {!capture
+          ? 'Share this tab to record audio for mining.'
+          : watching === 'polling'
+            ? `Recording. New cards in ${deck || 'the deck'} are picked up as they appear.`
+            : watching === 'unreachable'
+              ? 'Recording. Anki is not reachable, so new cards are not being detected.'
+              : watching === 'idle'
+                ? 'Recording. New-card detection resumes when you move or play.'
+                : 'Recording this tab. Any line can be mined; unheard ones are replayed first.'}
       </span>
       {capture ? (
         <button type="button" onClick={onStop} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-bold text-ink hover:bg-line-soft">

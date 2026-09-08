@@ -40,10 +40,8 @@ export async function ankiAlive(): Promise<boolean> {
   }
 }
 
-export interface Media {
-  data: string // base64
-  filename: string
-}
+/** A media file for AnkiConnect: inline base64, or a URL it downloads itself (no CORS involved). */
+export type Media = { filename: string } & ({ data: string; url?: undefined } | { url: string; data?: undefined })
 
 export interface CardPayload {
   sentence?: string
@@ -53,9 +51,10 @@ export interface CardPayload {
   image?: Media
 }
 
-interface NoteInfo {
+export interface NoteInfo {
   noteId: number
   modelName: string
+  tags: string[]
   fields: Record<string, { value: string; order: number }>
 }
 
@@ -115,8 +114,8 @@ function allTags(payload: CardPayload, s: Settings) {
 function buildFields(payload: CardPayload, s: Settings, existing: string[] | null) {
   const has = (f: string) => !!f && (existing === null || existing.includes(f))
   const fields: Record<string, string> = {}
-  const audio: { data: string; filename: string; fields: string[] }[] = []
-  const picture: { data: string; filename: string; fields: string[] }[] = []
+  const audio: (Media & { fields: string[] })[] = []
+  const picture: (Media & { fields: string[] })[] = []
   const skipped: string[] = []
 
   if (payload.sentence !== undefined) {
@@ -186,7 +185,41 @@ export async function findLastCard(s: Settings): Promise<LastCard> {
   }
   const id = Math.max(...recent)
   const [info] = await invoke<NoteInfo[]>('notesInfo', { notes: [id] })
-  return { id, word: firstFieldText(info), modelName: info.modelName, info }
+  return toLastCard(info)
+}
+
+export function toLastCard(info: NoteInfo): LastCard {
+  return { id: info.noteId, word: firstFieldText(info), modelName: info.modelName, info }
+}
+
+/**
+ * Ids of notes added to the configured deck in the last `windowMs`. Anki's search can't go finer than
+ * `added:1` (today), so the window is applied to the ids, which are creation timestamps in ms.
+ */
+export async function findRecentNoteIds(s: Settings, windowMs: number): Promise<number[]> {
+  if (!s.deck) return []
+  const ids = await invoke<number[]>('findNotes', { query: `added:1 deck:${quoteSearch(s.deck)}` }, 5000)
+  const cutoff = Date.now() - windowMs
+  return ids.filter((id) => id > cutoff)
+}
+
+export async function notesInfo(ids: number[]): Promise<NoteInfo[]> {
+  if (!ids.length) return []
+  return invoke<NoteInfo[]>('notesInfo', { notes: ids }, 5000)
+}
+
+/** The sentence a note was made from, as plain text (Yomitan wraps the scanned word in tags and may add cloze markup). */
+export function noteSentence(info: NoteInfo, s: Settings): string {
+  const raw = s.sentenceField ? info.fields[s.sentenceField]?.value ?? '' : ''
+  return raw
+    .replace(/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g, '$1')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim()
 }
 
 /** Like asbplayer's "update last card": enrich a note you just made (e.g. one Yomitan created). */

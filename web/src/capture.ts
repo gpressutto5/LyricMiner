@@ -25,9 +25,13 @@ export interface Coverage {
 
 interface Frame {
   t: number
+  /** Wall clock (performance.now()) when the frame was grabbed. */
+  wall: number
   blob: Blob
   /** Grabbed while the embed was flashing its play/pause glyph over the video (see CHROME_MS). */
   dirty: boolean
+  /** The glyph was detected in the pixels (as opposed to assumed from timing). */
+  glyph: boolean
 }
 
 const SAMPLE_MS = 100
@@ -38,20 +42,78 @@ const FRAME_WIDTH = 640
 const PEAK_TARGET = 0.95
 const MAX_GAIN = 4
 /**
- * How long YouTube paints its own chrome — the big play/pause glyph in the middle of the video, which no
- * amount of cropping can hide — after a seek or a play/pause. Frames grabbed inside that window are kept
- * (they may be all we have) but only used when nothing cleaner is close enough.
+ * How long YouTube paints its own chrome after a play or a seek: the embed shows its controls, including a
+ * big play/pause glyph in the middle of the video that no cropping can hide, and only autohides them after
+ * about 4.5 s with no further activity (measured Sep 2026; `controls=0` makes no difference). Frames grabbed
+ * inside that window are kept (they may be all we have) but only used when nothing cleaner is close enough.
  */
-const CHROME_MS = 1500
+const CHROME_MS = 4500
+/**
+ * The glyph is a dark disc about this many CSS pixels across, centred on the video, with a white play or
+ * pause icon inside. Frames are checked for it directly; the timing rules above are only a backstop.
+ */
+const GLYPH_DIAMETER_CSS = 68
+/**
+ * The transport only learns it is paused when the embed posts a state change back, some hundreds of ms
+ * after the request, and the glyph is already up by then. When a pause is first seen, frames grabbed this
+ * far back are marked dirty after the fact.
+ */
+const PAUSE_LAG_MS = 1000
 /**
  * Recorded audio consistently lands ~55 ms later in the recording than the player-time mapping predicts
  * (measured against ffmpeg cuts of the same video across several runs), so shift the window by that much.
  */
 const CAPTURE_LATENCY = 0.055
-/** Start the replay this far before the requested window so the first sample lands before it. */
+/** Start the replay at least this far before the requested window so the first sample lands before it. */
 const REPLAY_LEAD = 0.6
+/** How early to start a clean-frame replay: the glyph window plus room for the seek to buffer. */
+const CLEAN_AFTER_MS = CHROME_MS + 1500
 /** Extra wall-clock slack for the replay (seek, buffering) before giving up. */
 const REPLAY_SLACK_MS = 8000
+
+/**
+ * Does this frame have the embed's play/pause glyph on it? The glyph is a neutral dark disc centred on the
+ * video with a white icon in the middle, so look for mostly-dark, low-saturation pixels in a ring where the
+ * disc is and a fair share of near-white pixels in its centre. `scale` converts CSS pixels to frame pixels.
+ * Video content can imitate that, but a false positive only costs a frame; a miss puts a glyph on a card.
+ */
+export function hasGlyph(ctx: CanvasRenderingContext2D, w: number, h: number, scale: number): boolean {
+  const R = (GLYPH_DIAMETER_CSS / 2) * scale
+  const cx = w / 2
+  const cy = h / 2
+  const size = Math.ceil(R * 2) + 2
+  const x0 = Math.max(0, Math.round(cx - R - 1))
+  const y0 = Math.max(0, Math.round(cy - R - 1))
+  if (x0 + size > w || y0 + size > h) return false
+  const { data } = ctx.getImageData(x0, y0, size, size)
+  let ring = 0
+  let ringDark = 0
+  let core = 0
+  let coreWhite = 0
+  const step = Math.max(1, Math.round(R / 24))
+  for (let y = 0; y < size; y += step) {
+    for (let x = 0; x < size; x += step) {
+      const dx = x0 + x - cx
+      const dy = y0 + y - cy
+      const d = Math.hypot(dx, dy) / R
+      if (d > 0.92) continue
+      const i = (y * size + x) * 4
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      const hi = Math.max(r, g, b)
+      const lo = Math.min(r, g, b)
+      if (d >= 0.55) {
+        ring++
+        if (hi < 165 && hi - lo < 80) ringDark++
+      } else if (d <= 0.4) {
+        core++
+        if (lo > 195 && hi - lo < 45) coreWhite++
+      }
+    }
+  }
+  return ring > 0 && core > 0 && ringDark / ring > 0.6 && coreWhite / core > 0.12
+}
 
 export function captureSupported(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && typeof MediaRecorder !== 'undefined'
@@ -76,6 +138,13 @@ export class TabCapture extends EventTarget {
   /** performance.now() until which grabbed frames are assumed to have the embed's glyph on them. */
   private chromeUntil = 0
   private grabbing = false
+  /** When a grabbed frame last had the embed's glyph on it (dev diagnostics). */
+  lastGlyphAt = 0
+  private wasPaused = true
+  /** When a replay asked the player to pause; frames before that instant are known to be glyph-free. */
+  private pauseRequestedAt: number | null = null
+  /** Frames grabbed inside this wall-time span are dirty even if they looked clean when taken (see smudgeSince). */
+  private smudge: { from: number; to: number } | null = null
   private decoded: { size: number; buffer: AudioBuffer } | null = null
   private pendingData: (() => void)[] = []
   private recording: Promise<void> | null = null
@@ -150,8 +219,14 @@ export class TabCapture extends EventTarget {
     if (tr.paused) {
       // Pausing paints the glyph, and it lingers into the first frames after playback resumes.
       this.chromeUntil = now + CHROME_MS
+      // A user pause is only noticed once the embed reports it, so reach back over the lag; our own pauses
+      // are timestamped, and smudging further back would eat the clean frame a replay just waited for.
+      if (!this.wasPaused) this.smudgeSince(this.pauseRequestedAt ?? now - PAUSE_LAG_MS)
+      this.pauseRequestedAt = null
+      this.wasPaused = true
       return
     }
+    this.wasPaused = false
     const t = tr.currentTime
     const rate = tr.rate
     const last = this.runs[this.runs.length - 1]
@@ -167,10 +242,22 @@ export class TabCapture extends EventTarget {
         return
       }
     }
-    // A fresh run means the playhead jumped (a seek) or the rate changed — both flash the glyph.
-    this.chromeUntil = now + CHROME_MS
+    // A fresh run means the playhead jumped (a seek) or the rate changed, both of which show the glyph. While
+    // the embed buffers after a seek the playhead does not move at all, which also breaks the run; that is
+    // not new activity, so it must not push the glyph deadline out further.
+    if (!last || last.rate !== rate || Math.abs(t - last.t1) > MAX_DRIFT) this.chromeUntil = now + CHROME_MS
     this.runs.push({ wall0: now, t0: t, wall1: now, t1: t, rate, bias: 0, n: 1 })
     this.maybeGrabFrame(t, now)
+  }
+
+  /**
+   * Frames grabbed from `wall` up to now were taken under the glyph without knowing it; demote them. The span
+   * is remembered so a frame whose JPEG encode is still in flight gets demoted when it lands, but it must
+   * not extend into the future or every later frame would be dirty too.
+   */
+  private smudgeSince(wall: number) {
+    this.smudge = { from: wall, to: performance.now() }
+    for (const f of this.frames) if (f.wall >= wall) f.dirty = true
   }
 
   private maybeGrabFrame(t: number, now: number) {
@@ -179,7 +266,6 @@ export class TabCapture extends EventTarget {
     const v = this.video
     if (!rect || !v.videoWidth || rect.width < 10) return
     this.lastFrameAt = now
-    const dirty = now < this.chromeUntil
     // The captured surface is the tab's viewport; map CSS pixels to captured pixels. Inset a little so the
     // player's rounded corners / card border don't end up in the card image.
     const sx = v.videoWidth / window.innerWidth
@@ -196,12 +282,18 @@ export class TabCapture extends EventTarget {
     const ctx = this.canvas.getContext('2d')
     if (!ctx) return
     ctx.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, w, h)
+    // Look for the glyph in the pixels themselves; the timing rule is a backstop for when that misses.
+    const glyph = hasGlyph(ctx, w, h, w / (rect.width - inset * 2))
+    if (glyph) this.lastGlyphAt = now
+    const dirty = glyph || now < this.chromeUntil
     this.grabbing = true
     this.canvas.toBlob(
       (blob) => {
         this.grabbing = false
         if (!blob) return
-        this.frames.push({ t, blob, dirty })
+        // A smudge may have landed while the encode was in flight.
+        const smudged = !!this.smudge && now >= this.smudge.from && now <= this.smudge.to
+        this.frames.push({ t, wall: now, blob, dirty: dirty || smudged, glyph })
         if (this.frames.length > MAX_FRAMES) this.frames.splice(0, this.frames.length - MAX_FRAMES)
       },
       'image/jpeg',
@@ -245,13 +337,21 @@ export class TabCapture extends EventTarget {
    * Make sure [start, end] is in the recording: when it is not, replay it once at normal speed
    * (the user hears the line again), then put the playhead back where it was.
    */
-  async ensure(start: number, end: number): Promise<void> {
-    if (this.has(start, end)) return
+  /**
+   * Make sure [start, end] has been recorded, replaying it if not. With `cleanFrameAt`, the replay instead
+   * starts CHROME_MS early and runs until a frame free of the embed's glyph exists near that moment; that is
+   * several seconds of playback, so callers only ask for it when the user chose a real frame over the
+   * video thumbnail.
+   */
+  async ensure(start: number, end: number, cleanFrameAt?: number): Promise<void> {
+    const frameAt = cleanFrameAt
+    const done = () => this.has(start, end) && (frameAt === undefined || this.hasCleanFrame(frameAt))
+    if (done()) return
     if (this.recording) {
       await this.recording
-      if (this.has(start, end)) return
+      if (done()) return
     }
-    this.recording = this.replay(start, end).finally(() => {
+    this.recording = this.replay(start, end, frameAt).finally(() => {
       this.recording = null
     })
     return this.recording
@@ -262,25 +362,46 @@ export class TabCapture extends EventTarget {
     return !!this.recording
   }
 
-  private async replay(start: number, end: number): Promise<void> {
+  private async replay(start: number, end: number, frameAt?: number): Promise<void> {
     if (this.stopped) throw new Error('Capture has stopped. Start it again to mine.')
     const tr = this.transport
     const resumeAt = tr.currentTime
     const wasPlaying = !tr.paused
     const prevRate = tr.rate
     const release = this.hold()
+    const replayStart = performance.now()
+    let from = start
     this.dispatchEvent(new Event('recording'))
     try {
       if (prevRate !== 1) tr.setRate(1)
-      tr.seek(Math.max(0, start - REPLAY_LEAD))
+      // The seek and play show the glyph for CHROME_MS. Start far enough ahead that the wanted frame is
+      // grabbed after it hides, so the picture is of the line rather than of the glyph. This is the whole
+      // reason a replay for an image runs several seconds long; audio alone needs only REPLAY_LEAD.
+      let lead = REPLAY_LEAD
+      if (frameAt !== undefined) lead = Math.max(lead, CLEAN_AFTER_MS / 1000 - (frameAt - start))
+      from = Math.max(0, start - lead)
+      tr.seek(from)
       tr.play()
-      const deadline = performance.now() + (end - start + REPLAY_LEAD) * 1000 + REPLAY_SLACK_MS
-      while (!this.has(start, end)) {
+      const wanted = () => this.has(start, end) && (frameAt === undefined || this.hasCleanFrame(frameAt))
+      // Allow for running on past the line: a clean frame may only turn up within a second after `frameAt`.
+      const until = Math.max(end, frameAt === undefined ? end : frameAt + 1)
+      const deadline = performance.now() + (until - from) * 1000 + REPLAY_SLACK_MS
+      while (!wanted()) {
         if (this.stopped) throw new Error('Capture stopped during the replay.')
-        if (performance.now() > deadline) throw new Error('Could not record this line: playback did not reach the end of it. Try again.')
+        if (performance.now() > deadline) {
+          if (this.has(start, end)) break // Audio is in; settle for whatever frame there is.
+          throw new Error('Could not record this line: playback did not reach the end of it. Try again.')
+        }
+        // The moment we wanted a picture of has gone by with the glyph still up (a slow seek, usually).
+        // Waiting longer cannot help, since frames further on are not of that moment.
+        if (frameAt !== undefined && this.has(start, end) && tr.currentTime > frameAt + 1.3) {
+          throw new Error("YouTube's play/pause overlay was still showing when that moment went by. Try “Record frame” again.")
+        }
         await new Promise((r) => setTimeout(r, SAMPLE_MS))
       }
     } finally {
+      if (import.meta.env.DEV && frameAt !== undefined) this.debugFrames(frameAt, from, replayStart)
+      this.pauseRequestedAt = performance.now()
       tr.pause()
       if (prevRate !== 1) tr.setRate(prevRate)
       tr.seek(resumeAt)
@@ -338,19 +459,38 @@ export class TabCapture extends EventTarget {
   }
 
   /**
-   * Nearest captured frame to t, or null when none is within a second. Frames caught under the embed's
-   * play/pause glyph lose to any clean frame in range, and are only returned when nothing else is close.
+   * Nearest frame to t grabbed clear of the embed's glyph, or null when none is within a second. Frames
+   * caught under the glyph are never returned: the video thumbnail makes a better card image than a play
+   * button pasted over the singer.
    */
+  /** Dev only: what the frame store looks like around `t` after a clean-frame replay, to diagnose "no clean frame". */
+  private debugFrames(t: number, from: number, replayStart: number) {
+    const near = this.frames.filter((f) => f.wall >= replayStart).map((f) => ({
+      t: +f.t.toFixed(2),
+      dt: +(f.t - t).toFixed(2),
+      wall: +((f.wall - replayStart) / 1000).toFixed(2),
+      dirty: f.dirty,
+      glyph: f.glyph,
+    }))
+    console.info(
+      `[capture] clean-frame replay: want t=${t.toFixed(2)} from=${from.toFixed(2)} chromeUntil=+${((this.chromeUntil - replayStart) / 1000).toFixed(2)}s ` +
+        `glyphLastSeen=${this.lastGlyphAt ? `+${((this.lastGlyphAt - replayStart) / 1000).toFixed(2)}s` : 'never'} clean=${this.hasCleanFrame(t)} runs=${this.runs.length}`,
+    )
+    console.table(near)
+  }
+
+  /** True when a frame within a second of t was grabbed clear of the glyph. */
+  hasCleanFrame(t: number): boolean {
+    return this.frameAt(t) !== null
+  }
+
   frameAt(t: number): Blob | null {
     let best: Frame | null = null
-    let bestDirty: Frame | null = null
     for (const f of this.frames) {
-      if (Math.abs(f.t - t) > 1) continue
-      if (f.dirty) {
-        if (!bestDirty || Math.abs(f.t - t) < Math.abs(bestDirty.t - t)) bestDirty = f
-      } else if (!best || Math.abs(f.t - t) < Math.abs(best.t - t)) best = f
+      if (f.dirty || Math.abs(f.t - t) > 1) continue
+      if (!best || Math.abs(f.t - t) < Math.abs(best.t - t)) best = f
     }
-    return (best ?? bestDirty)?.blob ?? null
+    return best?.blob ?? null
   }
 
   get frameCount() {

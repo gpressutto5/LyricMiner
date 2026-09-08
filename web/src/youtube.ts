@@ -234,3 +234,25 @@ export async function fetchOEmbed(id: string): Promise<OEmbed> {
   if (!r.ok) throw new Error(r.status === 404 || r.status === 401 ? 'Video not found or not embeddable.' : `YouTube responded ${r.status}.`)
   return (await r.json()) as OEmbed
 }
+
+const thumbCache = new Map<string, Promise<string>>()
+
+/**
+ * The largest still YouTube serves for a video. maxresdefault only exists for some uploads (a miss is a
+ * 404, which the browser reports as an image error), so probe it and fall back to hqdefault, which always
+ * exists. Used as the card image when no frame free of the embed's glyph has been captured.
+ */
+export function bestThumbnail(id: string): Promise<string> {
+  let p = thumbCache.get(id)
+  if (!p) {
+    const maxres = `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`
+    p = new Promise<string>((resolve) => {
+      const img = new Image()
+      img.onload = () => resolve(img.naturalWidth > 120 ? maxres : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`)
+      img.onerror = () => resolve(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`)
+      img.src = maxres
+    })
+    thumbCache.set(id, p)
+  }
+  return p
+}

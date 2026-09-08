@@ -22,7 +22,9 @@ recorded from the tab while you listen.
    (browser storage).
 2. Synced lyrics are fetched from LRCLIB automatically. If the wrong version is picked (romaji instead of kana, for
    example) hit **Change** in the bar above the lyrics and choose another result, or paste your own LRC. Use the
-   **Offset** control if the highlight runs early or late.
+   **Offset** control if the highlight runs early or late: − / + nudge by 100 ms (1 s with Shift), clicking the
+   value lets you type one, and for videos with a long intro press **First line starts now** the moment the first
+   line is actually sung.
 3. Study. Click anywhere on a line to play it (the text itself stays selectable for Yomitan); the **+** in its
    left margin opens the mining dialog for that line. Or use the keyboard:
 
@@ -43,6 +45,11 @@ recorded from the tab while you listen.
    LyricMiner writes the line's trimmed audio, a video frame and the sentence into that note.
    Press `M` to open **Mine** and fine-tune the audio start/end, pick a different frame, or edit the sentence before sending.
    **Add new card** creates a standalone note in the deck / note type chosen in Settings.
+6. Optional, one-click mining: turn on **Detect new Anki cards** in Settings. While capture is on, LyricMiner
+   polls Anki once a second for cards added to your deck, matches each card's sentence to a lyric line, and
+   either opens the mining dialog on that line with the card preselected or, if you choose **Update it
+   automatically**, fills the card in straight away (a toast offers **Adjust** if the match looks wrong). This is
+   the same polling approach GameSentenceMiner uses; cards made while the tab is hidden or idle are ignored.
 
 Configure field names, deck and note type under **Settings**. Fields that don't exist on the target note type are
 skipped.
@@ -54,6 +61,11 @@ current tab (`getDisplayMedia`); the audio track is recorded continuously with `
 player area is grabbed every half second. When you mine a line, the matching slice is cut with Web Audio,
 peak-normalised, encoded to MP3 in the browser, and sent to AnkiConnect with the nearest frame. Measured against
 ffmpeg cuts of the downloaded file, captured clips line up within about 50 ms.
+
+The embed paints a large play/pause glyph over the video for about 4.5 s after every play or seek, so frames grabbed
+in that window are never used. Lines you have listened through have clean frames; a line replayed to record it
+does not, so its card gets the video's thumbnail instead, and the mining dialog offers **Record frame**, a longer
+replay that starts early enough for the glyph to have gone.
 
 Limitations: the recording lives in memory for the current page; some label-owned videos disable embedding
 ("Open on YouTube" is shown instead); the first listen has to happen in real time.

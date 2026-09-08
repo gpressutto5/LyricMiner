@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import { SectionLabel, StatusChip, Stepper } from './components/primitives'
-import { DEFAULT_SETTINGS, type Settings } from './storage'
+import { DEFAULT_SETTINGS, type AutoDetectAction, type Settings } from './storage'
 
 interface Props {
   open: boolean
@@ -137,6 +138,45 @@ export function SettingsDialog({ open, onOpenChange, settings, onChange }: Props
             Per-song tag placeholders: <b className="text-ink-2">{'{artist} {title} {album} {channel}'}</b>. Values are squashed to PascalCase, so{' '}
             <b className="text-ink-2">Song::{'{artist}'}:{'{title}'}</b> gives something like <b className="text-ink-2">Song::Yorushika:TheHitchhikersGuide</b>. Leave it empty to skip.
             “Update last card” writes into whichever of these fields exist on the newest note added to this deck in the last 10 minutes; missing fields are skipped.
+          </p>
+        </section>
+
+        {/* New cards */}
+        <section className="flex flex-col gap-3">
+          <SectionLabel>New cards</SectionLabel>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Detection">
+              <span className={cn('flex h-[42px] cursor-pointer items-center gap-3 rounded-xl bg-soft px-3.5', !settings.deck && 'cursor-not-allowed opacity-60')}>
+                <Switch checked={settings.autoDetect} onCheckedChange={(v) => set('autoDetect', v)} disabled={!settings.deck} aria-label="Detect new Anki cards" />
+                <span className="text-sm font-semibold">Detect new Anki cards</span>
+              </span>
+            </Field>
+            <Field label="When one appears">
+              <Select value={settings.autoDetectAction} onValueChange={(v) => set('autoDetectAction', v as AutoDetectAction)} disabled={!settings.autoDetect}>
+                <SelectTrigger className={cn(fieldClass, 'w-full data-[size=default]:h-[42px] disabled:opacity-60 [&_svg]:text-faint')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="dialog" className="rounded-lg font-semibold">
+                    Open the mining dialog
+                  </SelectItem>
+                  <SelectItem value="update" className="rounded-lg font-semibold">
+                    Update it automatically
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <p className="m-0 rounded-xl bg-coral-wash px-3.5 py-3 text-xs leading-relaxed font-medium text-ink-2/80">
+            {settings.deck ? (
+              <>
+                While capture is on, LyricMiner asks Anki once a second for cards just added to <b className="text-ink-2">{settings.deck}</b>, finds the lyric line each card's
+                sentence came from, and either fills it in or opens the dialog for a look first. Cards made while this tab is hidden or idle are left alone. Add a card from
+                Yomitan as usual and the audio, image and sentence follow without pressing <b className="text-ink-2">U</b>.
+              </>
+            ) : (
+              'Choose a deck above to enable this. Detection only looks at cards added to that deck.'
+            )}
           </p>
         </section>
 

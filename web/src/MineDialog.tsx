@@ -3,7 +3,7 @@ import { Pause, Play, X } from 'lucide-react'
 import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
-import { addCard, buildSongTag, findLastCard, updateCard, type CardPayload } from './anki'
+import { addCard, buildSongTag, findLastCard, updateCard, type CardPayload, type LastCard } from './anki'
 import { blobToBase64 } from './api'
 import type { TabCapture } from './capture'
 import { Button } from '@/components/ui/button'
@@ -13,11 +13,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Kbd } from './components/primitives'
 import { formatTime, formatTimeMs } from './lrc'
 import type { Settings } from './storage'
+import { bestThumbnail } from './youtube'
 
 export interface MineTarget {
   text: string
   start: number
   end: number
+  /** A card that was just detected in the deck: "update" writes into it instead of looking up the last card. */
+  note?: LastCard
 }
 
 interface Props {
@@ -49,12 +52,10 @@ export async function buildPayload(
   const songTag = buildSongTag(track, settings.songTagTemplate)
   if (songTag) payload.tags = [songTag]
   if (opts.sentence) payload.sentence = text
-  // Record anything missing up front (one replay covers audio and image) so the cuts below never fail on coverage.
-  if (opts.audio || (opts.image && !capture.frameAt(imageTime))) {
-    const lo = opts.image ? Math.min(start, imageTime - 0.3) : start
-    const hi = opts.image ? Math.max(end, imageTime + 0.3) : end
-    await capture.ensure(Math.max(0, lo), hi)
-  }
+  // Record missing audio up front so the cut below never fails on coverage. The image never triggers a
+  // replay here: a frame is used when a clean one exists, otherwise the video thumbnail stands in, and the
+  // dialog offers the slow clean-frame recording as an explicit choice.
+  if (opts.audio) await capture.ensure(start, end)
   const jobs: Promise<void>[] = []
   if (opts.audio) {
     jobs.push(
@@ -68,15 +69,28 @@ export async function buildPayload(
   }
   if (opts.image) {
     const frame = capture.frameAt(imageTime)
-    if (!frame) throw new Error('No captured frame near that moment. Try again, or turn the image off.')
-    jobs.push(
-      blobToBase64(frame).then((data) => {
-        payload.image = { data, filename: `lyricminer_${track.id}_${ms(imageTime)}.jpg` }
-      }),
-    )
+    if (frame) {
+      jobs.push(
+        blobToBase64(frame).then((data) => {
+          payload.image = { data, filename: `lyricminer_${track.id}_${ms(imageTime)}.jpg` }
+        }),
+      )
+    } else {
+      // AnkiConnect fetches the URL itself, so the thumbnail never has to pass through this origin.
+      jobs.push(
+        bestThumbnail(track.id).then((url) => {
+          payload.image = { url, filename: `lyricminer_${track.id}_thumbnail.jpg` }
+        }),
+      )
+    }
   }
   await Promise.all(jobs)
   return payload
+}
+
+/** True when the payload's image is the video thumbnail rather than a captured frame. */
+export function usedThumbnail(payload: CardPayload) {
+  return !!payload.image?.url
 }
 
 export function MineDialog({ track, capture, target, settings, onClose, toast }: Props) {
@@ -102,6 +116,12 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
       capture.removeEventListener('recorded', off)
     }
   }, [capture])
+  // While a replay records, the dialog and its backdrop get out of the way: they sit over the player, and the
+  // tab capture would otherwise put the dimmed page (or the dialog itself) into the card image.
+  useEffect(() => {
+    document.body.classList.toggle('lm-recording', recording)
+    return () => document.body.classList.remove('lm-recording')
+  }, [recording])
   const audioRef = useRef<HTMLAudioElement>(null)
   const previewUrl = useRef<string | null>(null)
 
@@ -137,6 +157,27 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
     setFrameUrl(url)
     return () => URL.revokeObjectURL(url)
   }, [frame])
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    bestThumbnail(track.id).then((u) => alive && setThumbUrl(u))
+    return () => {
+      alive = false
+    }
+  }, [track.id])
+  const [framing, setFraming] = useState(false)
+  /** The slow path: replay from well before the line so the embed's glyph has hidden by the time the frame is grabbed. */
+  const recordCleanFrame = async () => {
+    if (framing) return
+    setFraming(true)
+    try {
+      await capture.ensure(Math.min(start, imageTime - 0.3), Math.max(end, imageTime + 0.3), imageTime)
+    } catch (e) {
+      toast((e as Error).message, 'bad')
+    } finally {
+      setFraming(false)
+    }
+  }
 
   const nudge = (which: 'start' | 'end', d: number) => {
     if (which === 'start') setStart((s) => Math.max(0, Math.min(end - 0.1, +(s + d).toFixed(3))))
@@ -171,11 +212,11 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
     setBusy(mode)
     try {
       // Resolve the target before the payload work so a miss fails fast, and so the toast can name the note.
-      const target = mode === 'update' ? await findLastCard(settings) : null
+      const target = mode === 'update' ? (note ?? (await findLastCard(settings))) : null
       const payload = await buildPayload(track, capture, text, start, end, imageTime, { audio: incAudio, image: incImage, sentence: incSentence }, settings)
       if (target) {
         const r = await updateCard(target, payload, settings)
-        toast(`Updated last card${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
+        toast(`Updated ${note ? 'card' : 'last card'}${r.word ? ` (${r.word})` : ''}${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
       } else {
         const r = await addCard(payload, settings)
         toast(`Added new card${r.skipped.length ? `. Skipped: ${r.skipped.join(', ')}` : ''}`, 'ok')
@@ -189,12 +230,21 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
   }
 
   const canAdd = !!settings.deck && !!settings.model
+  const note = target.note
 
   return (
+    <>
+      {recording && (
+        <div className="pointer-events-none fixed inset-x-0 top-5 z-[60] flex justify-center">
+          <span className="flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-[13px] font-bold text-white shadow-dialog">
+            <span className="size-2 animate-pulse rounded-full bg-coral" /> Recording the line… the dialog comes back when it is done
+          </span>
+        </div>
+      )}
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[92vh] flex-col gap-5 overflow-y-auto rounded-3xl border-0 p-6 shadow-dialog sm:max-w-[760px]"
+        className={cn('flex max-h-[92vh] flex-col gap-5 overflow-y-auto rounded-3xl border-0 p-6 shadow-dialog transition-opacity sm:max-w-[760px]', recording && 'pointer-events-none opacity-0')}
         onKeyDown={(e) => {
           const t = e.target as HTMLElement
           if (e.key === 'Enter' && t.tagName !== 'TEXTAREA' && t.tagName !== 'INPUT' && t.tagName !== 'BUTTON') {
@@ -205,9 +255,14 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
       >
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <DialogTitle className="text-xl font-extrabold tracking-[-0.3px]">Mine this line</DialogTitle>
+            <DialogTitle className="text-xl font-extrabold tracking-[-0.3px]">{note ? 'New card detected' : 'Mine this line'}</DialogTitle>
             <DialogDescription className="text-[13px] font-medium text-muted">
-              <span className="font-jp">{track.track ?? track.title}</span> · {formatTime(target.start)} · Esc to close
+              {note && (
+                <>
+                  Updating <span className="font-jp font-bold text-ink-2">{note.word || `note ${note.id}`}</span> ·{' '}
+                </>
+              )}
+              <span className="font-jp">{track.track ?? track.title}</span> · {formatTime(target.start)} · Esc to {note ? 'skip' : 'close'}
             </DialogDescription>
           </div>
           <DialogClose asChild>
@@ -275,8 +330,20 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
             {frameUrl ? (
               <img className="aspect-video w-full rounded-xl bg-black object-contain" src={frameUrl} alt="" />
             ) : (
-              <div className="flex aspect-video w-full items-center justify-center rounded-xl bg-ink px-4 text-center text-xs font-semibold text-white/70">
-                No frame yet · captured when the line is recorded
+              <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-ink">
+                {thumbUrl && <img className="size-full object-contain" src={thumbUrl} alt="" />}
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 to-black/0 px-3 pt-6 pb-2.5">
+                  <span className="text-xs font-semibold text-white/85">{framing ? 'Recording a clean frame…' : 'Video thumbnail · no clean frame of this moment yet'}</span>
+                  <button
+                    type="button"
+                    onClick={() => void recordCleanFrame()}
+                    disabled={framing || recording}
+                    title="Replays from about 5 s before the line so YouTube's play/pause overlay has hidden when the frame is taken"
+                    className="h-7 shrink-0 rounded-full bg-white/15 px-2.5 text-[11px] font-bold text-white hover:bg-white/25 disabled:opacity-40"
+                  >
+                    Record frame · ~6 s
+                  </button>
+                </div>
               </div>
             )}
             <div className="flex items-center gap-2">
@@ -308,12 +375,13 @@ export function MineDialog({ track, capture, target, settings, onClose, toast }:
               {busy === 'add' ? (recording ? 'Recording…' : 'Adding…') : 'Add new card'}
             </Button>
             <Button disabled={!!busy} onClick={() => run('update')} className="h-11 rounded-[14px] px-[18px] font-bold">
-              {busy === 'update' ? (recording ? 'Recording…' : 'Updating…') : 'Update last card'} <Kbd className="text-white/60">↵</Kbd>
+              {busy === 'update' ? (recording ? 'Recording…' : 'Updating…') : note ? 'Update card' : 'Update last card'} <Kbd className="text-white/60">↵</Kbd>
             </Button>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+    </>
   )
 }
 

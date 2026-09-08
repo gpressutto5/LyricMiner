@@ -10,7 +10,13 @@ export interface Settings {
   padStart: number
   padEnd: number
   fontSize: number
+  /** Poll AnkiConnect for cards made in the deck while mining, so Yomitan cards get enriched without pressing U. */
+  autoDetect: boolean
+  /** What to do with a detected card: enrich it straight away, or open the mining dialog for a look first. */
+  autoDetectAction: AutoDetectAction
 }
+
+export type AutoDetectAction = 'dialog' | 'update'
 
 export const DEFAULT_SETTINGS: Settings = {
   deck: '',
@@ -24,6 +30,8 @@ export const DEFAULT_SETTINGS: Settings = {
   padStart: 0,
   padEnd: 0,
   fontSize: 28,
+  autoDetect: false,
+  autoDetectAction: 'dialog',
 }
 
 const SETTINGS_KEY = 'lyricminer.settings'

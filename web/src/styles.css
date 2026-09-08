@@ -112,3 +112,8 @@
     margin: 0;
   }
 }
+
+/* A replay is recording the player: keep the dialog backdrop from dimming what the tab capture sees. */
+body.lm-recording [data-slot='dialog-overlay'] {
+  background: transparent;
+}
