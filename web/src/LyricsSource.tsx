@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from 'cn'
+import { LocateFixed } from 'lucide-react'
 import type { LyricsResult, TrackInfo } from '../../shared/types'
 import { lyricsSearch } from './api'
-import { SectionLabel, Stepper } from './components/primitives'
+import { RoundButton, SectionLabel, Stepper } from './components/primitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -15,6 +16,10 @@ interface Props {
   onChange: (l: SavedLyrics | null) => void
   /** Rendered at the right end of the header row (font-size controls). */
   trailing?: ReactNode
+  /** Start of the first lyric line before any offset is applied, in seconds. */
+  firstLineStart?: number
+  /** Current playhead in seconds, or null while there's no player yet. */
+  playhead?: () => number | null
 }
 
 /** Strip bracketed junk like [Official Video] / (MV) / 【歌詞】 from a YouTube title before searching LRCLIB. */
@@ -27,7 +32,7 @@ export function cleanTitle(title: string): string {
     .trim()
 }
 
-export function LyricsSource({ info, saved, onChange, trailing }: Props) {
+export function LyricsSource({ info, saved, onChange, trailing, firstLineStart, playhead }: Props) {
   const [open, setOpen] = useState(!saved)
   const [track, setTrack] = useState('')
   const [artist, setArtist] = useState('')
@@ -103,6 +108,26 @@ export function LyricsSource({ info, saved, onChange, trailing }: Props) {
     if (saved) onChange({ ...saved, offset: Math.round(ms) / 1000 })
   }
   const offsetMs = Math.round((saved?.offset ?? 0) * 1000)
+  /** ± 100 ms per click, ± 1 s with Shift held. */
+  const step = (e: React.MouseEvent, dir: 1 | -1) => setOffset(offsetMs + dir * (e.shiftKey ? 1000 : 100))
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const startEdit = () => {
+    setDraft(String(offsetMs))
+    setEditing(true)
+  }
+  const commitEdit = () => {
+    setEditing(false)
+    const ms = parseOffsetInput(draft)
+    if (ms !== null) setOffset(ms)
+  }
+  /** Long intro: the user presses this the moment the first line is actually sung. */
+  const syncFirstLine = () => {
+    const t = playhead?.()
+    if (t == null || firstLineStart == null) return
+    setOffset((t - firstLineStart) * 1000)
+  }
+  const canSync = !!saved && firstLineStart != null && !!playhead
 
   return (
     <>
@@ -125,15 +150,46 @@ export function LyricsSource({ info, saved, onChange, trailing }: Props) {
         </div>
         <div className="flex shrink-0 items-center gap-3.5">
           {saved && (
-            <div className="flex items-center gap-2.5 text-[13px] font-medium text-muted" title="Positive when lyrics show up too early">
+            <div className="flex items-center gap-2.5 text-[13px] font-medium text-muted" title="Positive when lyrics show up too early. Click the value to type one; Shift-click − / + for 1 s steps.">
               <span>Offset</span>
               <Stepper
-                value={`${offsetMs < 0 ? '−' : '+'}${Math.abs(offsetMs)} ms`}
-                onDec={() => setOffset(offsetMs - 100)}
-                onInc={() => setOffset(offsetMs + 100)}
-                decLabel="Lyrics 100 ms earlier"
-                incLabel="Lyrics 100 ms later"
+                value={
+                  editing ? (
+                    <input
+                      autoFocus
+                      inputMode="numeric"
+                      aria-label="Offset in milliseconds"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onBlur={commitEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitEdit()
+                        if (e.key === 'Escape') setEditing(false)
+                        e.stopPropagation()
+                      }}
+                      className="w-[76px] rounded-md bg-card px-1 text-center text-[13px] font-bold text-ink tabular-nums outline-none ring-1 ring-coral"
+                    />
+                  ) : (
+                    <button type="button" onClick={startEdit} title="Type an offset (ms, or e.g. 12.5s)" className="rounded-md px-1 hover:bg-line-soft">
+                      {`${offsetMs < 0 ? '−' : '+'}${Math.abs(offsetMs)} ms`}
+                    </button>
+                  )
+                }
+                onDec={(e) => step(e, -1)}
+                onInc={(e) => step(e, 1)}
+                decLabel="Lyrics 100 ms earlier (Shift: 1 s)"
+                incLabel="Lyrics 100 ms later (Shift: 1 s)"
               />
+              {canSync && (
+                <RoundButton
+                  size="sm"
+                  label="First line starts now — press it the moment the first line is sung"
+                  onClick={syncFirstLine}
+                >
+                  <LocateFixed strokeWidth={2.5} />
+                </RoundButton>
+              )}
             </div>
           )}
           {trailing && (
@@ -221,4 +277,15 @@ export function LyricsSource({ info, saved, onChange, trailing }: Props) {
       )}
     </>
   )
+}
+
+/** Accepts "1500", "-300", "+2.5s", "12,5 s"; returns milliseconds or null when unparseable. */
+export function parseOffsetInput(raw: string): number | null {
+  const m = raw.trim().replace('−', '-').replace(',', '.').match(/^([+-]?\d+(?:\.\d+)?)\s*(ms|s)?$/i)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n)) return null
+  const unit = m[2]?.toLowerCase()
+  // Bare numbers are ms; a decimal with no unit reads as seconds ("12.5").
+  return Math.round(unit === 's' || (!unit && m[1].includes('.')) ? n * 1000 : n)
 }

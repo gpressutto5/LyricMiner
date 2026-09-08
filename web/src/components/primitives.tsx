@@ -92,8 +92,8 @@ export function RoundButton({ label, size = 'md', tone = 'soft', className, chil
 
 interface StepperProps {
   value: ReactNode
-  onDec: () => void
-  onInc: () => void
+  onDec: (e: React.MouseEvent<HTMLButtonElement>) => void
+  onInc: (e: React.MouseEvent<HTMLButtonElement>) => void
   decLabel?: string
   incLabel?: string
   className?: string
