@@ -30,8 +30,6 @@ interface Frame {
   blob: Blob
   /** Grabbed while the embed was flashing its play/pause glyph over the video (see CHROME_MS). */
   dirty: boolean
-  /** The glyph was detected in the pixels (as opposed to assumed from timing). */
-  glyph: boolean
 }
 
 const SAMPLE_MS = 100
@@ -138,8 +136,6 @@ export class TabCapture extends EventTarget {
   /** performance.now() until which grabbed frames are assumed to have the embed's glyph on them. */
   private chromeUntil = 0
   private grabbing = false
-  /** When a grabbed frame last had the embed's glyph on it (dev diagnostics). */
-  lastGlyphAt = 0
   private wasPaused = true
   /** When a replay asked the player to pause; frames before that instant are known to be glyph-free. */
   private pauseRequestedAt: number | null = null
@@ -284,7 +280,6 @@ export class TabCapture extends EventTarget {
     ctx.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, w, h)
     // Look for the glyph in the pixels themselves; the timing rule is a backstop for when that misses.
     const glyph = hasGlyph(ctx, w, h, w / (rect.width - inset * 2))
-    if (glyph) this.lastGlyphAt = now
     const dirty = glyph || now < this.chromeUntil
     this.grabbing = true
     this.canvas.toBlob(
@@ -293,7 +288,7 @@ export class TabCapture extends EventTarget {
         if (!blob) return
         // A smudge may have landed while the encode was in flight.
         const smudged = !!this.smudge && now >= this.smudge.from && now <= this.smudge.to
-        this.frames.push({ t, wall: now, blob, dirty: dirty || smudged, glyph })
+        this.frames.push({ t, wall: now, blob, dirty: dirty || smudged })
         if (this.frames.length > MAX_FRAMES) this.frames.splice(0, this.frames.length - MAX_FRAMES)
       },
       'image/jpeg',
@@ -369,8 +364,6 @@ export class TabCapture extends EventTarget {
     const wasPlaying = !tr.paused
     const prevRate = tr.rate
     const release = this.hold()
-    const replayStart = performance.now()
-    let from = start
     this.dispatchEvent(new Event('recording'))
     try {
       if (prevRate !== 1) tr.setRate(1)
@@ -379,7 +372,7 @@ export class TabCapture extends EventTarget {
       // reason a replay for an image runs several seconds long; audio alone needs only REPLAY_LEAD.
       let lead = REPLAY_LEAD
       if (frameAt !== undefined) lead = Math.max(lead, CLEAN_AFTER_MS / 1000 - (frameAt - start))
-      from = Math.max(0, start - lead)
+      const from = Math.max(0, start - lead)
       tr.seek(from)
       tr.play()
       const wanted = () => this.has(start, end) && (frameAt === undefined || this.hasCleanFrame(frameAt))
@@ -400,7 +393,6 @@ export class TabCapture extends EventTarget {
         await new Promise((r) => setTimeout(r, SAMPLE_MS))
       }
     } finally {
-      if (import.meta.env.DEV && frameAt !== undefined) this.debugFrames(frameAt, from, replayStart)
       this.pauseRequestedAt = performance.now()
       tr.pause()
       if (prevRate !== 1) tr.setRate(prevRate)
@@ -463,22 +455,6 @@ export class TabCapture extends EventTarget {
    * caught under the glyph are never returned: the video thumbnail makes a better card image than a play
    * button pasted over the singer.
    */
-  /** Dev only: what the frame store looks like around `t` after a clean-frame replay, to diagnose "no clean frame". */
-  private debugFrames(t: number, from: number, replayStart: number) {
-    const near = this.frames.filter((f) => f.wall >= replayStart).map((f) => ({
-      t: +f.t.toFixed(2),
-      dt: +(f.t - t).toFixed(2),
-      wall: +((f.wall - replayStart) / 1000).toFixed(2),
-      dirty: f.dirty,
-      glyph: f.glyph,
-    }))
-    console.info(
-      `[capture] clean-frame replay: want t=${t.toFixed(2)} from=${from.toFixed(2)} chromeUntil=+${((this.chromeUntil - replayStart) / 1000).toFixed(2)}s ` +
-        `glyphLastSeen=${this.lastGlyphAt ? `+${((this.lastGlyphAt - replayStart) / 1000).toFixed(2)}s` : 'never'} clean=${this.hasCleanFrame(t)} runs=${this.runs.length}`,
-    )
-    console.table(near)
-  }
-
   /** True when a frame within a second of t was grabbed clear of the glyph. */
   hasCleanFrame(t: number): boolean {
     return this.frameAt(t) !== null
