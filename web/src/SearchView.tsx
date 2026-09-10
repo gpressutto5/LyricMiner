@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ExternalLink, X } from 'lucide-react'
+import { ArrowLeft, Disc3, ExternalLink, Link2, Sparkles, X } from 'lucide-react'
 import { cn } from 'cn'
 import type { TrackInfo } from '../../shared/types'
 import type { SearchRequest } from './App'
 import { bookmarkletHref, youtubeSearchUrl } from './api'
-import { BuyMeACoffee, Card, Key, SectionLabel } from './components/primitives'
+import { BuyMeACoffee, Card, HowStep, SectionLabel } from './components/primitives'
 import { forgetTrack, loadLibrary } from './library'
 import { formatTime } from './lrc'
 
@@ -101,21 +101,22 @@ export function SearchView({ request, onOpen, onClear }: Props) {
               )}
             </section>
 
-            <Card className="grid grid-cols-[200px_minmax(0,1fr)] items-center gap-6 px-6 py-5 shadow-card-sm max-[900px]:grid-cols-1">
-              <div className="flex flex-col gap-1">
-                <SectionLabel className="text-muted">How it works</SectionLabel>
-                <span className="text-[13px] leading-relaxed font-medium text-faint">
-                  Songs play from YouTube, lyrics come from LRCLIB, and every line is plain text for Yomitan. Start capture to record audio for
-                  cards.
-                </span>
-              </div>
-              <div className="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-                <Hint keys={['←', '→', '↑']}>Jump between lines, replay one</Hint>
-                <Hint keys={['A', 'R']}>Auto-pause after each line, loop a line</Hint>
-                <Hint keys={['U']}>Add audio, image and sentence to the card Yomitan just made</Hint>
-                <Hint keys={['M']}>Fine-tune the clip first</Hint>
-              </div>
-            </Card>
+            <section className="flex flex-col gap-3.5">
+              <SectionLabel className="text-muted">How it works</SectionLabel>
+              <Card className="grid grid-cols-3 divide-x divide-line-soft shadow-card-sm max-[900px]:grid-cols-1 max-[900px]:divide-x-0 max-[900px]:divide-y">
+                <HowStep icon={Link2} title="Open a song" className="px-6 py-5">
+                  Paste a YouTube link, or click the bookmarklet on any YouTube video. Lyrics come from LRCLIB and every line is plain text for
+                  Yomitan.
+                </HowStep>
+                <HowStep icon={Disc3} title="Record this tab" className="px-6 py-5">
+                  Press <b>Start capture</b> and share this tab with its audio. The recording stays in your browser and never leaves it.
+                </HowStep>
+                <HowStep icon={Sparkles} title="Mine a line" className="px-6 py-5">
+                  Make a card with Yomitan, then press <b>U</b> to add that line's audio, image and sentence to it. Keyboard shortcuts are
+                  listed under the lyrics.
+                </HowStep>
+              </Card>
+            </section>
           </>
         )}
 
@@ -148,19 +149,6 @@ export function Bookmarklet({ compact = false }: { compact?: boolean }) {
       Mine in LyricMiner
       <span className="font-medium text-coral-text/70">· drag to bookmarks</span>
     </a>
-  )
-}
-
-function Hint({ keys, children }: { keys: string[]; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5 rounded-xl bg-soft px-3.5 py-3">
-      <div className="flex gap-1.5">
-        {keys.map((k) => (
-          <Key key={k}>{k}</Key>
-        ))}
-      </div>
-      <span className="text-xs font-semibold text-ink-2">{children}</span>
-    </div>
   )
 }
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from 'cn'
-import { Minus, Plus } from 'lucide-react'
+import { Minus, Plus, type LucideIcon } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** Keyboard hint rendered inside pills and buttons. */
@@ -8,12 +8,18 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   return <span className={cn('text-[11px] font-bold text-faint', className)}>{children}</span>
 }
 
-/** Boxed key used in the shortcut strips. */
-export function Key({ children }: { children: ReactNode }) {
+/** One step of the "how mining works" story: icon tile, title, a sentence or two. Used on the home page and in setup. */
+export function HowStep({ icon: Icon, title, children, className }: { icon: LucideIcon; title: string; children: ReactNode; className?: string }) {
   return (
-    <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-md border border-line bg-card px-1.5 text-xs font-bold text-ink">
-      {children}
-    </span>
+    <div className={cn('flex gap-4', className)}>
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-coral-tint text-coral-deep">
+        <Icon className="size-4" strokeWidth={2.25} />
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-[14px] font-bold text-ink">{title}</span>
+        <span className="text-[13px] leading-relaxed font-medium text-muted">{children}</span>
+      </div>
+    </div>
   )
 }
 

@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Check, Copy, Disc3, ExternalLink, Link2, Sparkles, X, type LucideIcon } from 'lucide-react'
+import { Check, Copy, Disc3, ExternalLink, Link2, Sparkles, X } from 'lucide-react'
 import { cn } from 'cn'
 import { ankiAlive } from './anki'
 import { captureSupported } from './capture'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { SectionLabel } from './components/primitives'
+import { HowStep, SectionLabel } from './components/primitives'
 
 interface Props {
   open: boolean
@@ -124,16 +124,16 @@ export function SetupDialog({ open, onOpenChange, onDone }: Props) {
         <section className="flex flex-col gap-4">
           <SectionLabel>How mining works</SectionLabel>
           <div className="flex flex-col divide-y divide-line-soft rounded-2xl border border-line">
-            <HowRow icon={Link2} title="Open a song">
+            <HowStep icon={Link2} title="Open a song" className="px-5 py-4">
               Paste a YouTube link into the search box. Or use the bookmarklet from the home page on any YouTube video.
-            </HowRow>
-            <HowRow icon={Disc3} title="Record this tab">
+            </HowStep>
+            <HowStep icon={Disc3} title="Record this tab" className="px-5 py-4">
               Press <b>Start capture</b> and share <b>this tab</b> with tab audio on. That is how the song's sound reaches your cards. The recording is saved
               only in your browser and never leaves it.
-            </HowRow>
-            <HowRow icon={Sparkles} title="Mine a line">
+            </HowStep>
+            <HowStep icon={Sparkles} title="Mine a line" className="px-5 py-4">
               Make a card with Yomitan on any line, then press <b>U</b> to add that line's audio, image and sentence to it.
-            </HowRow>
+            </HowStep>
           </div>
           {!capture && (
             <p className="rounded-xl bg-bad-tint px-3.5 py-3 text-[13px] leading-relaxed font-semibold text-bad-text">
@@ -158,20 +158,6 @@ function StepRow({ n, children }: { n: number; children: ReactNode }) {
       <span className="mt-px flex size-6 shrink-0 items-center justify-center rounded-full bg-ink text-[11px] font-extrabold text-white">{n}</span>
       <div className="min-w-0 flex-1 text-[14px] leading-relaxed font-medium text-ink-2">{children}</div>
     </li>
-  )
-}
-
-function HowRow({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
-  return (
-    <div className="flex gap-4 px-5 py-4">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-coral-tint text-coral-deep">
-        <Icon className="size-4" strokeWidth={2.25} />
-      </span>
-      <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-[14px] font-bold text-ink">{title}</span>
-        <span className="text-[13px] leading-relaxed font-medium text-muted">{children}</span>
-      </div>
-    </div>
   )
 }
 
