@@ -81,7 +81,7 @@ function tagPart(raw: string) {
  * Placeholders that resolve to nothing collapse, so a missing artist yields "Song::TheTitle"
  * rather than a dangling separator. Returns null when the template is empty or resolves to nothing.
  */
-export function buildSongTag(track: TrackInfo, template: string): string | null {
+export function buildSongTag(track: Pick<TrackInfo, 'title' | 'channel' | 'track' | 'artist' | 'album'>, template: string): string | null {
   if (!template.trim()) return null
   const values: Record<string, string> = {
     artist: track.artist || track.channel || '',
