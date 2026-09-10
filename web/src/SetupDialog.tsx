@@ -136,7 +136,8 @@ export function SetupDialog({ open, onOpenChange, onDone }: Props) {
               only in your browser and never leaves it.
             </HowStep>
             <HowStep icon={Sparkles} title="Mine a line" className="px-5 py-4">
-              Make a card with Yomitan on any line, then press <b>U</b> to add that line's audio, image and sentence to it.
+              Make a card with Yomitan on any line, then press <b>M</b> to add that line's audio, image and sentence to it. Turn on{' '}
+              <b>Detect new Anki cards</b> in settings and new cards are picked up as they appear.
             </HowStep>
           </div>
           {!capture && (
