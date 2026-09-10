@@ -23,6 +23,18 @@ export interface Coverage {
   end: number
 }
 
+/** One MediaRecorder's worth of audio (see SEGMENT_MS). */
+interface Segment {
+  recorder: MediaRecorder
+  chunks: Blob[]
+  /** performance.now() when the recorder started; provisional until its onstart fires. */
+  start: number
+  /** performance.now() when it was stopped, or null while still recording. */
+  end: number | null
+  pendingData: (() => void)[]
+  decoded: { size: number; buffer: AudioBuffer } | null
+}
+
 interface Frame {
   t: number
   /** Wall clock (performance.now()) when the frame was grabbed. */
@@ -68,6 +80,20 @@ const REPLAY_LEAD = 0.6
 const CLEAN_AFTER_MS = CHROME_MS + 1500
 /** Extra wall-clock slack for the replay (seek, buffering) before giving up. */
 const REPLAY_SLACK_MS = 8000
+/**
+ * The recording is cut into segments, each its own MediaRecorder, so clipping a line decodes a few minutes of
+ * Opus rather than the whole session (decoding costs ~90 ms and ~22 MB of PCM per recorded minute, and a
+ * single growing file could never be cached). Consecutive segments overlap so that any line shorter than the
+ * overlap lies wholly inside one of them; a longer line straddling a boundary simply counts as not recorded.
+ */
+const SEGMENT_MS = 3 * 60_000
+const SEGMENT_OVERLAP_MS = 20_000
+/**
+ * The tab is captured at its physical resolution (2× on a Retina display) but the card image is at most
+ * FRAME_WIDTH wide, so ask Chrome to scale the frames down before they reach us. It keeps the aspect ratio.
+ */
+const CAPTURE_MAX_WIDTH = 1600
+const CAPTURE_MAX_HEIGHT = 1200
 
 /**
  * Does this frame have the embed's play/pause glyph on it? The glyph is a neutral dark disc centred on the
@@ -124,9 +150,10 @@ export function captureSupported(): boolean {
  */
 export class TabCapture extends EventTarget {
   private stream: MediaStream
-  private recorder: MediaRecorder
-  private chunks: Blob[] = []
-  private recStart = 0
+  /** The shared audio track(s); every segment records from this. */
+  private audio: MediaStream
+  private mime: string | undefined
+  private segments: Segment[] = []
   private runs: Run[] = []
   private frames: Frame[] = []
   private video: HTMLVideoElement | null = null
@@ -141,8 +168,6 @@ export class TabCapture extends EventTarget {
   private pauseRequestedAt: number | null = null
   /** Frames grabbed inside this wall-time span are dirty even if they looked clean when taken (see smudgeSince). */
   private smudge: { from: number; to: number } | null = null
-  private decoded: { size: number; buffer: AudioBuffer } | null = null
-  private pendingData: (() => void)[] = []
   private recording: Promise<void> | null = null
   stopped = false
 
@@ -160,18 +185,9 @@ export class TabCapture extends EventTarget {
       stream.getTracks().forEach((t) => t.stop())
       throw new Error('No tab audio was shared. Tick "Share tab audio" in the dialog and try again.')
     }
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m))
-    this.recorder = new MediaRecorder(new MediaStream(audioTracks), mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : undefined)
-    this.recorder.ondataavailable = (e) => {
-      if (e.data.size) this.chunks.push(e.data)
-      const waiters = this.pendingData
-      this.pendingData = []
-      waiters.forEach((w) => w())
-    }
-    this.recorder.onstart = () => {
-      this.recStart = performance.now()
-    }
-    this.recorder.start(1000)
+    this.mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m))
+    this.audio = new MediaStream(audioTracks)
+    this.startSegment()
 
     const videoTrack = stream.getVideoTracks()[0]
     if (videoTrack) {
@@ -192,7 +208,7 @@ export class TabCapture extends EventTarget {
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 5 },
+        video: { frameRate: 5, width: { max: CAPTURE_MAX_WIDTH }, height: { max: CAPTURE_MAX_HEIGHT } },
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         // Chromium-only hints: preselect this tab, allow sharing it, keep system audio out.
         preferCurrentTab: true,
@@ -208,10 +224,47 @@ export class TabCapture extends EventTarget {
     return new TabCapture(stream, transport, getRect, hold)
   }
 
+  private startSegment(): Segment {
+    const recorder = new MediaRecorder(this.audio, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 128000 } : undefined)
+    const seg: Segment = { recorder, chunks: [], start: performance.now(), end: null, pendingData: [], decoded: null }
+    recorder.ondataavailable = (e) => {
+      if (e.data.size) seg.chunks.push(e.data)
+      const waiters = seg.pendingData
+      seg.pendingData = []
+      waiters.forEach((w) => w())
+    }
+    recorder.onstart = () => {
+      seg.start = performance.now()
+    }
+    recorder.start(1000)
+    this.segments.push(seg)
+    return seg
+  }
+
+  /** Open a new segment once the live one is old enough, and close the previous one once the new one has overlapped it. */
+  private rotateSegments(now: number) {
+    const live = this.segments[this.segments.length - 1]
+    if (now - live.start >= SEGMENT_MS) this.startSegment()
+    for (let i = 0; i < this.segments.length - 1; i++) {
+      const seg = this.segments[i]
+      if (seg.end === null && now - this.segments[i + 1].start >= SEGMENT_OVERLAP_MS) this.closeSegment(seg, now)
+    }
+  }
+
+  private closeSegment(seg: Segment, now: number) {
+    seg.end = now
+    try {
+      if (seg.recorder.state !== 'inactive') seg.recorder.stop()
+    } catch {
+      /* ignore */
+    }
+  }
+
   private tick() {
     if (this.stopped) return
     const tr = this.transport
     const now = performance.now()
+    this.rotateSegments(now)
     if (tr.paused) {
       // Pausing paints the glyph, and it lingers into the first frames after playback resumes.
       this.chromeUntil = now + CHROME_MS
@@ -311,21 +364,37 @@ export class TabCapture extends EventTarget {
     return out
   }
 
-  /** The run (at 1x) that contains the whole [start, end] window, if any. */
-  private runFor(start: number, end: number): Run | null {
+  /** Wall clock (performance.now()) at which player time t went past during `run`. */
+  private wallAt(run: Run, t: number): number {
+    return run.wall0 + (t - (run.t0 + run.bias)) * 1000
+  }
+
+  /**
+   * The segment holding the whole wall-clock window, if any. When the overlap gives a choice, take one that is
+   * already decoded, then a closed one (its decode can be cached for good), and the live one last.
+   */
+  private segmentFor(fromWall: number, toWall: number): Segment | null {
+    const holds = this.segments.filter((s) => s.start <= fromWall && (s.end === null || toWall <= s.end))
+    return holds.find((s) => s.decoded) ?? holds.find((s) => s.end !== null) ?? holds[0] ?? null
+  }
+
+  /** The run (at 1x) and the segment that together contain the whole [start, end] window, if any. */
+  private locate(start: number, end: number): { run: Run; seg: Segment } | null {
     // Prefer the most recent matching run: it is what the user just heard.
     for (let i = this.runs.length - 1; i >= 0; i--) {
-      const r = this.runs[i]
-      if (r.rate !== 1) continue
-      const lo = r.t0 + r.bias
-      const hi = r.t1 + r.bias
-      if (start >= lo - 0.05 && end <= hi + 0.05) return r
+      const run = this.runs[i]
+      if (run.rate !== 1) continue
+      const lo = run.t0 + run.bias
+      const hi = run.t1 + run.bias
+      if (start < lo - 0.05 || end > hi + 0.05) continue
+      const seg = this.segmentFor(this.wallAt(run, start), this.wallAt(run, end))
+      if (seg) return { run, seg }
     }
     return null
   }
 
   has(start: number, end: number): boolean {
-    return !!this.runFor(start, end)
+    return !!this.locate(start, end)
   }
 
   /**
@@ -403,34 +472,36 @@ export class TabCapture extends EventTarget {
     }
   }
 
-  /** Flush the recorder so the chunk list includes everything up to now. */
-  private async flush(): Promise<void> {
-    if (this.recorder.state !== 'recording') return
+  /** Flush a live segment's recorder so its chunk list includes everything up to now. */
+  private async flush(seg: Segment): Promise<void> {
+    if (seg.recorder.state !== 'recording') return
     await new Promise<void>((resolve) => {
-      this.pendingData.push(resolve)
-      this.recorder.requestData()
+      seg.pendingData.push(resolve)
+      seg.recorder.requestData()
     })
   }
 
-  private async decodeAll(): Promise<AudioBuffer> {
-    await this.flush()
-    const blob = new Blob(this.chunks, { type: this.recorder.mimeType || 'audio/webm' })
-    if (this.decoded && this.decoded.size === blob.size) return this.decoded.buffer
+  /** Decode one segment. Only the most recently used segment's PCM is kept: it is ~35 MB for a full one. */
+  private async decode(seg: Segment): Promise<AudioBuffer> {
+    await this.flush(seg)
+    const blob = new Blob(seg.chunks, { type: seg.recorder.mimeType || 'audio/webm' })
+    if (seg.decoded && seg.decoded.size === blob.size) return seg.decoded.buffer
     const ctx = new OfflineAudioContext(1, 1, 48000)
     const buffer = await ctx.decodeAudioData(await blob.arrayBuffer())
-    this.decoded = { size: blob.size, buffer }
+    for (const other of this.segments) if (other !== seg) other.decoded = null
+    seg.decoded = { size: blob.size, buffer }
     return buffer
   }
 
   /** Cut [start, end] (player seconds) out of the recording and encode it as MP3. */
   async clip(start: number, end: number): Promise<Blob> {
     await this.ensure(start, end)
-    const run = this.runFor(start, end)
-    if (!run) throw new Error('This part of the song has not been captured yet. Play through it once at normal speed.')
-    const buffer = await this.decodeAll()
-    const recOffset = (run.wall0 - this.recStart) / 1000
-    const from = recOffset + (start - (run.t0 + run.bias)) + CAPTURE_LATENCY
-    const to = recOffset + (end - (run.t0 + run.bias)) + CAPTURE_LATENCY
+    const found = this.locate(start, end)
+    if (!found) throw new Error('This part of the song has not been captured yet. Play through it once at normal speed.')
+    const { run, seg } = found
+    const buffer = await this.decode(seg)
+    const from = (this.wallAt(run, start) - seg.start) / 1000 + CAPTURE_LATENCY
+    const to = (this.wallAt(run, end) - seg.start) / 1000 + CAPTURE_LATENCY
     const sr = buffer.sampleRate
     const i0 = Math.max(0, Math.floor(from * sr))
     const i1 = Math.min(buffer.length, Math.ceil(to * sr))
@@ -477,11 +548,8 @@ export class TabCapture extends EventTarget {
     if (this.stopped) return
     this.stopped = true
     clearInterval(this.timer)
-    try {
-      if (this.recorder.state !== 'inactive') this.recorder.stop()
-    } catch {
-      /* ignore */
-    }
+    const now = performance.now()
+    for (const seg of this.segments) if (seg.end === null) this.closeSegment(seg, now)
     this.stream.getTracks().forEach((t) => t.stop())
     if (this.video) {
       this.video.srcObject = null
