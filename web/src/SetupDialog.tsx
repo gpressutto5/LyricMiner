@@ -6,6 +6,7 @@ import { captureSupported } from './capture'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { HowStep, SectionLabel } from './components/primitives'
+import { Bookmarklet } from './SearchView'
 
 interface Props {
   open: boolean
@@ -125,7 +126,10 @@ export function SetupDialog({ open, onOpenChange, onDone }: Props) {
           <SectionLabel>How mining works</SectionLabel>
           <div className="flex flex-col divide-y divide-line-soft rounded-2xl border border-line">
             <HowStep icon={Link2} title="Open a song" className="px-5 py-4">
-              Paste a YouTube link into the search box. Or use the bookmarklet from the home page on any YouTube video.
+              Paste a YouTube link into the search box. Or drag this to your bookmarks bar and click it on any YouTube video:
+              <span className="mt-2.5 block">
+                <Bookmarklet compact />
+              </span>
             </HowStep>
             <HowStep icon={Disc3} title="Record this tab" className="px-5 py-4">
               Press <b>Start capture</b> and share <b>this tab</b> with tab audio on. That is how the song's sound reaches your cards. The recording is saved

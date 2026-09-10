@@ -142,12 +142,12 @@ export function Bookmarklet({ compact = false }: { compact?: boolean }) {
       draggable
       title="Drag me to your bookmarks bar"
       className={cn(
-        'inline-flex cursor-grab items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-coral bg-coral-wash font-bold text-coral-deep active:cursor-grabbing',
+        'inline-flex cursor-grab items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-ghost bg-card font-bold text-ink hover:border-faint active:cursor-grabbing',
         compact ? 'h-8 px-3 text-xs' : 'h-11 px-4 text-[13px]',
       )}
     >
       Mine in LyricMiner
-      <span className="font-medium text-coral-text/70">· drag to bookmarks</span>
+      <span className="font-medium text-faint">· drag to bookmarks</span>
     </a>
   )
 }
