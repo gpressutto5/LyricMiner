@@ -13,10 +13,9 @@ interface Props {
   onOpen: (id: string) => void
   /** Leave the "search" hand-off page and show the library again. */
   onClear: () => void
-  onSetup: () => void
 }
 
-export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
+export function SearchView({ request, onOpen, onClear }: Props) {
   const [library, setLibrary] = useState<TrackInfo[]>(loadLibrary)
 
   const remove = (e: React.MouseEvent, id: string) => {
@@ -70,11 +69,17 @@ export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
         ) : (
           <>
             <section className="flex flex-col gap-3.5">
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-center gap-3">
                 <SectionLabel className="text-muted">Library</SectionLabel>
                 <span className="text-[13px] font-medium text-faint">
                   {library.length ? `${library.length} ${library.length === 1 ? 'song' : 'songs'}` : 'Songs you open are kept here.'}
                 </span>
+                {library.length > 0 && (
+                  <>
+                    <div className="flex-1" />
+                    <Bookmarklet compact />
+                  </>
+                )}
               </div>
               {library.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
@@ -91,12 +96,7 @@ export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
                       YouTube video.
                     </span>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Bookmarklet />
-                    <button type="button" onClick={onSetup} className="text-[13px] font-bold text-coral-text hover:text-coral-deep">
-                      Setup guide
-                    </button>
-                  </div>
+                  <Bookmarklet />
                 </Card>
               )}
             </section>
@@ -129,7 +129,7 @@ export function SearchView({ request, onOpen, onClear, onSetup }: Props) {
  * Draggable bookmarklet link. React refuses `javascript:` hrefs, so the attribute is set imperatively.
  * Clicking it in place does nothing useful, so the click is swallowed.
  */
-export function Bookmarklet() {
+export function Bookmarklet({ compact = false }: { compact?: boolean }) {
   const ref = useRef<HTMLAnchorElement>(null)
   useEffect(() => {
     ref.current?.setAttribute('href', bookmarkletHref())
@@ -140,9 +140,12 @@ export function Bookmarklet() {
       onClick={(e) => e.preventDefault()}
       draggable
       title="Drag me to your bookmarks bar"
-      className="inline-flex h-11 cursor-grab items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-coral bg-coral-wash px-4 text-[13px] font-bold text-coral-deep active:cursor-grabbing"
+      className={cn(
+        'inline-flex cursor-grab items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-coral bg-coral-wash font-bold text-coral-deep active:cursor-grabbing',
+        compact ? 'h-8 px-3 text-xs' : 'h-11 px-4 text-[13px]',
+      )}
     >
-      <span className="size-2 rounded-full bg-coral" /> Mine in LyricMiner
+      Mine in LyricMiner
       <span className="font-medium text-coral-text/70">· drag to bookmarks</span>
     </a>
   )

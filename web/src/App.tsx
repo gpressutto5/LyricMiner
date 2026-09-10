@@ -147,7 +147,7 @@ export default function App() {
       {trackId ? (
         <TrackView key={trackId} id={trackId} settings={settings} onSettings={updateSettings} toast={showToast} modalOpen={settingsOpen || setupOpen} />
       ) : (
-        <SearchView request={search} onOpen={openTrack} onClear={goHome} onSetup={() => setSetupOpen(true)} />
+        <SearchView request={search} onOpen={openTrack} onClear={goHome} />
       )}
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} onChange={updateSettings} />

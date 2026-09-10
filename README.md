@@ -12,13 +12,13 @@ recorded from the tab while you listen.
 
 - Chrome or Edge. Tab audio capture is Chromium-only; Firefox and Safari can play and read lyrics but not mine clips.
 - Anki with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on. Add the site's origin to
-  AnkiConnect's `webCorsOriginList` (the in-app **Setup** guide shows the exact value with a copy button).
+  AnkiConnect's `webCorsOriginList` (the in-app **Connect Anki** dialog shows the exact value with a copy button).
 - [Yomitan](https://yomitan.wiki/) in your browser, for lookups.
 
 ## How to use
 
-1. Paste a YouTube link into the box (a website can't search YouTube itself; the in-app **Setup** guide has a
-   bookmarklet that sends the video you're watching here in one click). Songs you open are kept in the library
+1. Paste a YouTube link into the box (a website can't search YouTube itself; the home page has a bookmarklet that
+   sends the video you're watching here in one click). Songs you open are kept in the library
    (browser storage).
 2. Synced lyrics are fetched from LRCLIB automatically. If the wrong version is picked (romaji instead of kana, for
    example) hit **Change** in the bar above the lyrics and choose another result, or paste your own LRC. Use the

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, ExternalLink, Pause, Play, RotateCcw, SkipBack, SkipForward, Square } from 'lucide-react'
+import { Circle, CircleHelp, ExternalLink, Pause, Play, RotateCcw, SkipBack, SkipForward, Square } from 'lucide-react'
 import { cn } from 'cn'
+import { Popover } from 'radix-ui'
 import { toast as sonner } from 'sonner'
 import type { TrackInfo } from '../../shared/types'
 import type { ToastFn } from './App'
@@ -153,8 +154,14 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
     transport?.pause()
     setMineTarget(target)
   }
+  // Bumped whenever mining is attempted without a recording; the capture row shakes to show what is missing.
+  const [nudge, setNudge] = useState(0)
   const openMine = (i?: number) => {
-    if (!capture) return toast('Start capture first so the audio can be clipped.', 'bad')
+    if (!ready) return toast('The player is still loading.', 'bad')
+    if (!capture) {
+      setNudge((n) => n + 1)
+      return toast('Start capture first so the audio can be clipped.', 'bad')
+    }
     const line = lineFor(i)
     if (!line) return toast('No lyric line to mine yet.', 'bad')
     showMine({ text: line.text, start: line.start, end: line.end })
@@ -322,9 +329,13 @@ export function TrackView({ id, settings, onSettings, toast, modalOpen }: Props)
             </Select>
           </div>
 
-          <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} watching={settings.autoDetect ? detect : null} deck={settings.deck} />
+          <div className="flex flex-col gap-2">
+            <CaptureRow capture={capture} busy={captureBusy} disabled={!ready} onStart={() => void startCapture()} onStop={() => capture?.stop()} watching={settings.autoDetect ? detect : null} nudge={nudge} />
+            {!capture && captureSupported() && <WhyShare />}
+          </div>
 
-          <Button onClick={() => openMine()} disabled={!canMine} className="h-12 w-full rounded-[14px] font-bold" title="Open mining dialog">
+          {/* Stays clickable while disabled-looking so the click can explain what is missing. */}
+          <Button onClick={() => openMine()} aria-disabled={!canMine} className="h-12 w-full rounded-[14px] font-bold aria-disabled:opacity-50 aria-disabled:hover:bg-primary" title="Open mining dialog">
             Mine <Kbd className="text-white/60">M</Kbd>
           </Button>
         </Card>
@@ -378,7 +389,7 @@ function CaptureRow({
   onStart,
   onStop,
   watching,
-  deck,
+  nudge,
 }: {
   capture: TabCapture | null
   busy: boolean
@@ -387,7 +398,8 @@ function CaptureRow({
   onStop: () => void
   /** New-card detection state, or null when the option is off. */
   watching: DetectorStatus | null
-  deck: string
+  /** Changes when the user tried to mine without recording; each change replays the shake. */
+  nudge: number
 }) {
   if (!captureSupported()) {
     return (
@@ -397,21 +409,13 @@ function CaptureRow({
     )
   }
   return (
-    <div className={cn('flex items-center gap-3 rounded-[14px] px-4 py-3', capture ? 'bg-ok-tint' : 'bg-soft')}>
+    <div key={nudge} className={cn('flex items-center gap-3 rounded-[14px] px-4 py-3', capture ? 'bg-ok-tint' : 'bg-soft', nudge > 0 && !capture && 'animate-shake')}>
       <span className="relative flex size-2.5 shrink-0 items-center justify-center">
         {capture && <span className="absolute inline-flex size-full animate-ping rounded-full bg-ok opacity-60" />}
         <span className={cn('relative inline-flex size-2.5 rounded-full', capture ? 'bg-ok' : 'bg-faint')} />
       </span>
       <span className={cn('min-w-0 flex-1 text-[13px] font-medium', capture ? 'text-ok-text' : 'text-muted')}>
-        {!capture
-          ? 'Share this tab to record audio for mining.'
-          : watching === 'polling'
-            ? `Recording. New cards in ${deck || 'the deck'} are picked up as they appear.`
-            : watching === 'unreachable'
-              ? 'Recording. Anki is not reachable, so new cards are not being detected.'
-              : watching === 'idle'
-                ? 'Recording. New-card detection resumes when you move or play.'
-                : 'Recording this tab. Any line can be mined; unheard ones are replayed first.'}
+        {!capture ? 'Share this tab to record audio for mining.' : watching === 'unreachable' ? 'Recording. Anki is not reachable.' : 'Recording'}
       </span>
       {capture ? (
         <button type="button" onClick={onStop} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-bold text-ink hover:bg-line-soft">
@@ -423,6 +427,38 @@ function CaptureRow({
         </button>
       )}
     </div>
+  )
+}
+
+/** Answers the natural worry before the browser's share prompt: why a website wants to record a tab. */
+function WhyShare() {
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button type="button" className="inline-flex items-center gap-1 self-start px-1 text-[11px] font-semibold text-faint hover:text-muted">
+          <CircleHelp className="size-3" /> Why share?
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={12}
+          className="z-50 w-[320px] rounded-2xl border border-line bg-card p-4 shadow-dialog outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+        >
+          <div className="flex flex-col gap-2 text-[13px] leading-relaxed font-medium text-ink-2">
+            <span className="text-[14px] font-bold text-ink">Why share this tab?</span>
+            <p>
+              The song plays inside YouTube's player, and a website can't read that audio directly. Sharing the tab lets the browser hand this
+              page the sound it is already playing, so each line's clip can go on your card.
+            </p>
+            <p className="font-semibold text-ink">The recording is saved only in your browser. Nothing is uploaded, and you can stop it at any time.</p>
+          </div>
+          <Popover.Arrow className="fill-card" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 

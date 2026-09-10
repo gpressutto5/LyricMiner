@@ -4,7 +4,7 @@ import type { Settings } from './storage'
 export const ANKI_URL = 'http://127.0.0.1:8765'
 
 export const ANKI_UNREACHABLE =
-  "Can't reach AnkiConnect. Make sure Anki is open with the AnkiConnect add-on, and that this site is listed in its webCorsOriginList (see Setup)."
+  "Can't reach AnkiConnect. Make sure Anki is open with the AnkiConnect add-on, and that this site is listed in its webCorsOriginList (see Connect Anki in the header)."
 
 /**
  * Call AnkiConnect straight from the browser. Browsers allow an https page to talk to 127.0.0.1, but
